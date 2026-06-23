@@ -10,10 +10,6 @@ import net.irisshaders.iris.api.v0.IrisApi;
 public class IrisCheck {
     public static final boolean IRIS_LOADED = FabricLoader.getInstance().isModLoaded("iris");
 
-    public static boolean checkIrisShaders() {
-        return IrisApi.getInstance().isShaderPackInUse();
-    }
-
     // Reads as "should disable" but returns whether Nvidium is ALLOWED to run: true unless an
     // Iris shaderpack is active (Nvidium's mesh-shader terrain can't feed Iris' shader pipeline,
     // see docs/IRIS_INTEGRATION.md). Kept under this name because MixinRenderSectionManager calls it.
