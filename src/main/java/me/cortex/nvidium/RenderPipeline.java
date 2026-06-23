@@ -2,8 +2,6 @@ package me.cortex.nvidium;
 
 import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
-import it.unimi.dsi.fastutil.ints.IntAVLTreeSet;
-import it.unimi.dsi.fastutil.ints.IntSortedSet;
 import me.cortex.nvidium.gl.RenderDevice;
 import me.cortex.nvidium.gl.buffers.IDeviceMappedBuffer;
 import me.cortex.nvidium.managers.RegionManager;
@@ -23,6 +21,7 @@ import org.lwjgl.opengl.GL11C;
 import org.lwjgl.system.MemoryUtil;
 
 import java.lang.Math;
+import java.util.Arrays;
 import java.util.BitSet;
 import java.util.List;
 
@@ -58,6 +57,12 @@ public class RenderPipeline {
     public static final int GL_DRAW_INDIRECT_UNIFIED_NV = 0x8F40;
     public static final int GL_DRAW_INDIRECT_ADDRESS_NV = 0x8F41;
 
+    //Reused clear values for glClearNamedBufferSubData (read synchronously, never mutated) so the
+    //per-region/per-frame visibility clears don't allocate a one-element int[] on every call.
+    private static final int[] CLEAR_ZERO = {0};
+    private static final int[] CLEAR_ONE = {1};
+    private static final int[] CLEAR_MINUS_ONE = {-1};
+
     private static final RenderDevice device = new RenderDevice();
 
     public final SectionManager sectionManager;
@@ -83,6 +88,10 @@ public class RenderPipeline {
     private final int bufferSizesMB;
 
     private final BitSet regionVisibilityTracker;
+
+    //Reused each frame to collect visible regions as packed (distance<<16)|id keys, sorted in
+    //place instead of allocating a fresh IntAVLTreeSet (+ a node per region) every frame.
+    private final int[] regionSortBuffer;
 
     //Max memory that the gpu can use to store geometry in mb
     private long max_geometry_memory;
@@ -112,6 +121,7 @@ public class RenderPipeline {
         cbs += maxRegions*8L;
 
         regionVisibilityTracker = new BitSet(maxRegions);
+        regionSortBuffer = new int[maxRegions];
 
         regionVisibilityTracking = new RegionVisibilityTracker(downloadStream, maxRegions);
 
@@ -141,8 +151,8 @@ public class RenderPipeline {
         //Enqueue all the visible regions
         {
             //The region data indicies is located at the end of the sceneUniform
-            //TODO: Sort the regions from closest to furthest from the camera
-            IntSortedSet regions = new IntAVLTreeSet();
+            //Collect visible regions as packed (distance<<16)|id keys into a reused buffer and sort
+            //in place; ascending order is nearest-first since distance occupies the high bits.
             for (int i = 0; i < rm.maxRegionIndex(); i++) {
                 if (!rm.regionExists(i)) continue;
                 if ((Nvidium.config.region_keep_distance != 256 && Nvidium.config.region_keep_distance != 32) && !rm.withinSquare(Nvidium.config.region_keep_distance+4, i, chunkPos.x, chunkPos.y, chunkPos.z)) {
@@ -151,29 +161,28 @@ public class RenderPipeline {
                 }
 
                 if (rm.isRegionVisible(frustum, i)) {
-                    regions.add((rm.distance(i, chunkPos.x, chunkPos.y, chunkPos.z)<<16)|i);
-                    visibleRegions++;
+                    regionSortBuffer[visibleRegions++] = (rm.distance(i, chunkPos.x, chunkPos.y, chunkPos.z)<<16)|i;
                     regionVisibilityTracker.set(i);
                 } else {
                     if (regionVisibilityTracker.get(i)) {//Going from visible to non visible
                         //Clear the visibility bits
                         if (Nvidium.config.enable_temporal_coherence) {
-                            glClearNamedBufferSubData(sectionVisibility.getId(), GL_R8UI, (long) i << 8, 255, GL_RED_INTEGER, GL_UNSIGNED_BYTE, new int[]{0});
+                            glClearNamedBufferSubData(sectionVisibility.getId(), GL_R8UI, (long) i << 8, 255, GL_RED_INTEGER, GL_UNSIGNED_BYTE, CLEAR_ZERO);
                         }
                     }
                     regionVisibilityTracker.clear(i);
                 }
 
             }
-            regionMap = new short[regions.size()];
             if (visibleRegions == 0) return;
+            Arrays.sort(regionSortBuffer, 0, visibleRegions);//Nearest-first by packed key
+            regionMap = new short[visibleRegions];
             long addr = sectionManager.uploadStream.getUpload(sceneUniform, SCENE_SIZE, visibleRegions*2);
             queryAddr = addr;//This is ungodly hacky
-            int j = 0;
-            for (int i : regions) {
-                regionMap[j] = (short) i;
-                MemoryUtil.memPutShort(addr+((long) j <<1), (short) i);
-                j++;
+            for (int j = 0; j < visibleRegions; j++) {
+                int packed = regionSortBuffer[j];
+                regionMap[j] = (short) packed;
+                MemoryUtil.memPutShort(addr+((long) j <<1), (short) packed);
             }
 
         }
@@ -384,12 +393,12 @@ public class RenderPipeline {
         //GPU per-section visibility so the reused id does not inherit stale visibility state.
         regionVisibilityTracker.clear(id);
         if (Nvidium.config.enable_temporal_coherence) {
-            glClearNamedBufferSubData(sectionVisibility.getId(), GL_R8UI, (long) id << 8, 255, GL_RED_INTEGER, GL_UNSIGNED_BYTE, new int[]{0});
+            glClearNamedBufferSubData(sectionVisibility.getId(), GL_R8UI, (long) id << 8, 255, GL_RED_INTEGER, GL_UNSIGNED_BYTE, CLEAR_ZERO);
         }
     }
 
     private void setRegionVisible(long rid) {
-        glClearNamedBufferSubData(regionVisibility.getId(), GL_R8UI, rid, 1, GL_RED_INTEGER, GL_UNSIGNED_BYTE, new int[]{(byte)(1)});
+        glClearNamedBufferSubData(regionVisibility.getId(), GL_R8UI, rid, 1, GL_RED_INTEGER, GL_UNSIGNED_BYTE, CLEAR_ONE);
     }
 
     private void setSectionVisible(int cx, int cy, int cz) {
@@ -398,7 +407,7 @@ public class RenderPipeline {
             int id = sectionManager.getSectionRegionIndex(cx, cy, cz);
             if (id != -1) {
                 id |= rid << 8;
-                glClearNamedBufferSubData(sectionVisibility.getId(), GL_R8UI, id, 1, GL_RED_INTEGER, GL_UNSIGNED_BYTE, new int[]{-1});
+                glClearNamedBufferSubData(sectionVisibility.getId(), GL_R8UI, id, 1, GL_RED_INTEGER, GL_UNSIGNED_BYTE, CLEAR_MINUS_ONE);
             }
         }
     }
