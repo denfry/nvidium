@@ -1,6 +1,5 @@
 package me.cortex.nvidium.gl.shader;
 
-import me.cortex.nvidium.gl.GlObject;
 import org.lwjgl.opengl.GL20C;
 
 import java.util.HashMap;
@@ -9,9 +8,10 @@ import java.util.Map;
 import static org.lwjgl.opengl.GL20.glDeleteProgram;
 import static org.lwjgl.opengl.GL20.glUseProgram;
 
-public class Shader extends GlObject {
+public class Shader {
+    private final int id;
     private Shader(int program) {
-        super(program);
+        id = program;
     }
 
     public static Builder make(IShaderProcessor processor) {
@@ -27,13 +27,7 @@ public class Shader extends GlObject {
     }
 
     public void delete() {
-        super.free0();
         glDeleteProgram(id);
-    }
-
-    @Override
-    public void free() {
-        this.delete();
     }
 
     public static class Builder {

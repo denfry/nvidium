@@ -11,200 +11,85 @@
 #extension GL_KHR_shader_subgroup_ballot : require
 #extension GL_KHR_shader_subgroup_vote : require
 
-layout(binding = 1) uniform sampler2D tex_light;
-
 #import <nvidium:occlusion/scene.glsl>
-#import <nvidium:terrain/vertex_format/vertex_format.glsl>
-
-#ifdef RENDER_FOG
-#import <sodium:include/fog.glsl>
-#endif
-
-#ifdef TRANSLUCENCY_SORTING_QUADS
-vec3 depthPos = vec3(0);
-shared float depthBuffers[32];
-#endif
+#import <nvidium:terrain/fog.glsl>
 
 layout(local_size_x = 32) in;
-layout(triangles, max_vertices=128, max_primitives=64) out;
+layout(triangles, max_vertices=64, max_primitives=32) out;
 
 //originAndBaseData.w is in quad count space, so is endIdx
 taskNV in Task {
     vec4 originAndBaseData;
     uint quadCount;
-    #ifdef TRANSLUCENCY_SORTING_QUADS
-    uint8_t jiggle;
-    #endif
-    int translucencyIndex;
 };
 
-#ifndef USE_NV_FRAGMENT_SHADER_BARYCENTRIC
 layout(location=1) out Interpolants {
-#ifdef RENDER_FOG
-    vec2 v_FragDistance;
-#endif
+    vec4 tint;
+    vec4 addin;
     vec2 uv;
-    vec3 v_colour;
 } OUT[];
-#endif
 
-void emitQuadIndicies() {
-    uint primBase = gl_LocalInvocationID.x * 6;
-    uint vertexBase = gl_LocalInvocationID.x<<2;
-    gl_PrimitiveIndicesNV[primBase+0] = vertexBase+0;
-    gl_PrimitiveIndicesNV[primBase+1] = vertexBase+1;
-    gl_PrimitiveIndicesNV[primBase+2] = vertexBase+2;
-    gl_PrimitiveIndicesNV[primBase+3] = vertexBase+2;
-    gl_PrimitiveIndicesNV[primBase+4] = vertexBase+3;
-    gl_PrimitiveIndicesNV[primBase+5] = vertexBase+0;
+
+vec3 decodeVertex(Vertex v) {
+    return vec3(v.a,v.b,v.c)*(32.0f/65535)-8.0f;
 }
 
-void emitVertex(uint vertexBaseId, uint innerId) {
-    Vertex V = terrainData[vertexBaseId + innerId];
-    uint outId = (gl_LocalInvocationID.x<<2)+innerId;
-    vec3 pos = decodeVertexPosition(V)+originAndBaseData.xyz;
-    gl_MeshVerticesNV[outId].gl_Position = MVP*vec4(pos,1.0);
 
-#ifndef USE_NV_FRAGMENT_SHADER_BARYCENTRIC
-    #ifdef RENDER_FOG
-    OUT[outId].v_FragDistance = getFragDistance(pos+subchunkOffset.xyz);
-    #endif
+layout(binding = 1) uniform sampler2D tex_light;
 
-    OUT[outId].uv = decodeVertexUV(V);
-
-    vec4 tint = decodeVertexColour(V);
-    tint *= sampleLight(decodeLightUV(V));
-    tint *= tint.w;
-    OUT[outId].v_colour = tint.rgb;
-#endif
+vec4 sampleLight(vec2 uv) {
+    return texture(tex_light, clamp(uv / 256.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0)));
 }
-
-#ifdef TRANSLUCENCY_SORTING_QUADS
-void computeDepth(uint vertexBaseId) {
-    for (uint innerId = 0; innerId < 4; innerId++) {
-        Vertex V = terrainData[vertexBaseId + innerId];
-        uint outId = (gl_LocalInvocationID.x<<2)+innerId;
-        vec3 pos = decodeVertexPosition(V)+originAndBaseData.xyz;
-        vec3 exactPos = pos+subchunkOffset.xyz;
-        depthPos += exactPos;
-    }
-}
-
-void swapQuads(uint idxA, uint idxB) {
-    if (idxA == idxB) {
-        return;
-    }
-
-    Vertex A0 = terrainData[(idxA<<2)+0];
-    Vertex A1 = terrainData[(idxA<<2)+1];
-    Vertex A2 = terrainData[(idxA<<2)+2];
-    Vertex A3 = terrainData[(idxA<<2)+3];
-    Vertex B0 = terrainData[(idxB<<2)+0];
-    Vertex B1 = terrainData[(idxB<<2)+1];
-    Vertex B2 = terrainData[(idxB<<2)+2];
-    Vertex B3 = terrainData[(idxB<<2)+3];
-    //groupMemoryBarrier();
-    //memoryBarrier();
-    //barrier();
-    terrainData[(idxA<<2)+0] = B0;
-    terrainData[(idxA<<2)+1] = B1;
-    terrainData[(idxA<<2)+2] = B2;
-    terrainData[(idxA<<2)+3] = B3;
-    terrainData[(idxB<<2)+0] = A0;
-    terrainData[(idxB<<2)+1] = A1;
-    terrainData[(idxB<<2)+2] = A2;
-    terrainData[(idxB<<2)+3] = A3;
-    //groupMemoryBarrier();
-    //memoryBarrier();
-    //barrier();
-}
-
-void performTranslucencySort() {
-    uint baseQuadPtr = floatBitsToUint(originAndBaseData.w) + (gl_WorkGroupID.x<<5);
-
-    float depth = dot(depthPos, depthPos) * ((1/4.0f)*(1/4.0f));
-    depthBuffers[gl_LocalInvocationID.x] = depth;
-
-    if (gl_GlobalInvocationID.x < jiggle) {
-        //If we are in the jiggle index dont attempt to swap else we start rendering garbage data
-        depthBuffers[gl_LocalInvocationID.x] = -9999.0f;
-    }
-
-    groupMemoryBarrier();
-    memoryBarrier();
-    barrier();
-    //TODO: use subgroup ballot to check if all the quads are already sorted, if they are dont perform sort op
-
-    //Only use 16 threads to sort all 32 data
-    if (gl_LocalInvocationID.x < 16) {
-        uint idA = (gl_LocalInvocationID.x<<1);
-        uint idB = (gl_LocalInvocationID.x<<1)+1;
-        float a = depthBuffers[idA];
-        float b = depthBuffers[idB];
-
-        if (a > 0.0001f &&  b > 0.0001f && a < b) {
-            swapQuads(idA + baseQuadPtr, idB + baseQuadPtr);
-        }
-    }
-}
-#endif
 
 //TODO: extra per quad culling
 void main() {
-    #ifdef TRANSLUCENCY_SORTING_QUADS
-    depthBuffers[gl_LocalInvocationID.x] = -99999999.0f;
-    #endif
-    if ((gl_GlobalInvocationID.x)>=quadCount) { //If its over the quad count, dont render
+    if ((gl_GlobalInvocationID.x>>1)>=quadCount) { //If its over the quad count, dont render
         return;
     }
+    //Each pair of meshlet invokations emits 2 vertices each and 1 primative each
+    uint id = (floatBitsToUint(originAndBaseData.w)<<2) + (gl_GlobalInvocationID.x<<1);//mul by 2 since there are 2 threads per quad each thread needs to process 2 vertices
 
-    emitQuadIndicies();
+    Vertex A = terrainData[id];
+    Vertex B = terrainData[id|1];
 
-    //Each pair of meshlet invokations emits 4 vertices each and 2 primative each
-    uint id;
-    #ifdef TRANSLUCENCY_SORTING_SODIUM
-    if (translucencyIndex == -1) { // If no translucency data, fallback to quad order
-        id = (floatBitsToUint(originAndBaseData.w) + gl_GlobalInvocationID.x)<<2;
-    } else { // If we have sorting data, process the vertex at the index translucencyIndexData
-        id = (floatBitsToUint(originAndBaseData.w) + translucencyIndexData[translucencyIndex + gl_GlobalInvocationID.x])<<2;
-    }
-    #else
-    id = (floatBitsToUint(originAndBaseData.w) + gl_GlobalInvocationID.x)<<2;
-    #endif
+    //TODO: OPTIMIZE
+    uint primId = gl_LocalInvocationID.x*3;
+    uint idxBase = (gl_LocalInvocationID.x>>1)<<2;
+    vec3 posA = decodeVertex(A)+originAndBaseData.xyz;
+    vec3 posB = decodeVertex(B)+originAndBaseData.xyz;
+    gl_MeshVerticesNV[(gl_LocalInvocationID.x<<1)].gl_Position   = MVP*vec4(posA,1.0);
+    gl_MeshVerticesNV[(gl_LocalInvocationID.x<<1)|1].gl_Position = MVP*vec4(posB,1.0);
+    //TODO: see if ternary or array is faster
+    bool isA = (gl_LocalInvocationID.x&1)==0;
+    gl_PrimitiveIndicesNV[primId]   = (isA?0:2)+idxBase;
+    gl_PrimitiveIndicesNV[primId+1] = (isA?1:3)+idxBase;
+    gl_PrimitiveIndicesNV[primId+2] = (isA?2:0)+idxBase;
 
-    #ifdef TRANSLUCENCY_SORTING_QUADS
-    // Need to sort before emitting quads if we want to do nv fragment shader barycentric
-    computeDepth(id);
-    performTranslucencySort();
-    barrier();
-    memoryBarrierShared();
+    OUT[(gl_LocalInvocationID.x<<1)|0].uv = vec2(A.g,A.h)*(1f/65536);
+    OUT[(gl_LocalInvocationID.x<<1)|1].uv = vec2(B.g,B.h)*(1f/65536);
 
-    //If we are at the start, dont want to render as it contains garbled data (out of bounds)
-    if (gl_GlobalInvocationID.x < jiggle) {
-        gl_MeshVerticesNV[(gl_LocalInvocationID.x<<2)+0].gl_Position = vec4(1,1,1,-1);
-        gl_MeshVerticesNV[(gl_LocalInvocationID.x<<2)+1].gl_Position = vec4(1,1,1,-1);
-        gl_MeshVerticesNV[(gl_LocalInvocationID.x<<2)+2].gl_Position = vec4(1,1,1,-1);
-        gl_MeshVerticesNV[(gl_LocalInvocationID.x<<2)+3].gl_Position = vec4(1,1,1,-1);
 
-    } else {
-        emitVertex(id, 0);
-        emitVertex(id, 1);
-        emitVertex(id, 2);
-        emitVertex(id, 3);
-    }
-    #else
-    emitVertex(id, 0);
-    emitVertex(id, 1);
-    emitVertex(id, 2);
-    emitVertex(id, 3);
-    #endif
+    vec4 tintA = vec4(A.e&int16_t(0xFF),(A.e>>8)&int16_t(0xFF),A.f&int16_t(0xFF),(A.f>>8)&int16_t(0xFF))/255;
+    vec4 tintB = vec4(B.e&int16_t(0xFF),(B.e>>8)&int16_t(0xFF),B.f&int16_t(0xFF),(B.f>>8)&int16_t(0xFF))/255;
+    tintA *= sampleLight(vec2(int16_t(A.i),int16_t(A.j)));
+    tintA *= tintA.w;
+    tintB *= sampleLight(vec2(int16_t(B.i),int16_t(B.j)));
+    tintB *= tintB.w;
+    vec4 tintAO;
+    vec4 addiAO;
+    vec4 tintBO;
+    vec4 addiBO;
+    computeFog(isSphericalFog, posA+subchunkOffset.xyz, tintA, fogColour, fogStart, fogEnd, tintAO, addiAO);
+    computeFog(isSphericalFog, posB+subchunkOffset.xyz, tintB, fogColour, fogStart, fogEnd, tintBO, addiBO);
+    OUT[(gl_LocalInvocationID.x<<1)|0].tint = tintAO;
+    OUT[(gl_LocalInvocationID.x<<1)|0].addin = addiAO;
+    OUT[(gl_LocalInvocationID.x<<1)|1].tint = tintBO;
+    OUT[(gl_LocalInvocationID.x<<1)|1].addin = addiBO;
 
-    gl_MeshPrimitivesNV[(gl_LocalInvocationID.x<<1)].gl_PrimitiveID = int((id>>2)<<1)|0;
-    gl_MeshPrimitivesNV[(gl_LocalInvocationID.x<<1)|1].gl_PrimitiveID = int((id>>2)<<1)|1;
+    gl_MeshPrimitivesNV[gl_LocalInvocationID.x].gl_PrimitiveID = int(gl_GlobalInvocationID.x>>1);
 
     if (gl_LocalInvocationID.x == 0) {
         //Remaining quads in workgroup
-        gl_PrimitiveCountNV = min(uint(int(quadCount)-int(gl_WorkGroupID.x<<5))<<1, 64);//2 primatives per quad
+        gl_PrimitiveCountNV = min(uint(int(quadCount)-int(gl_WorkGroupID.x<<4))<<1, 32);//2 primatives per quad
     }
-
 }

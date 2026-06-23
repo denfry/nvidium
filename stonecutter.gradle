@@ -6,4 +6,4 @@ plugins {
 
 // The active version dictates the state of //? conditional comments in src/.
 // Must be assigned exactly once. Switch with: ./gradlew "Set active project to <ver>"
-stonecutter.active "1.21.11"
+stonecutter.active "1.20.1"

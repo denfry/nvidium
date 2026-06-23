@@ -39,14 +39,10 @@ void emitParital(int visIndex) {
 void main() {
     //FIXME: It might actually be more efficent to just upload the region data straight into the ubo
     // this remove an entire level of indirection and also puts region data in the very fast path
-    Region data = regionData[regionIndicies[gl_WorkGroupID.x]];//fetch the region data
+    uint64_t data = regionData[regionIndicies[gl_WorkGroupID.x]];//fetch the region data
 
-    ivec3 pos = unpackRegionPosition(data);
-    pos -= chunkPosition.xyz;
-    pos -= unpackOriginOffsetId(unpackRegionTransformId(data));
-
-    vec3 start = pos - ADD_SIZE;
-    vec3 end = start + 1 + unpackRegionSize(data) + (ADD_SIZE*2);
+    vec3 start = ivec3((((int32_t)(data<<12))>>12), (int32_t)((int8_t)(data>>40)), (((int32_t)(data>>8))>>12)) - chunkPosition.xyz - ADD_SIZE;
+    vec3 end = start + 1 + (ivec3(i64vec3(data)>>ivec3(59,62,56))&ivec3(7,3,7)) + (ADD_SIZE*2);
 
     //TODO: Look into only doing 4 locals, for 2 reasons, its more effective for reducing duplicate computation and bandwidth
     // it also means that each thread can emit 3 primatives, 9 indicies each
@@ -55,9 +51,9 @@ void main() {
 
     vec3 corner = vec3(((gl_LocalInvocationID.x&1)==0)?start.x:end.x, ((gl_LocalInvocationID.x&4)==0)?start.y:end.y, ((gl_LocalInvocationID.x&2)==0)?start.z:end.z);
     corner *= 16.0f;
-    gl_MeshVerticesNV[gl_LocalInvocationID.x].gl_Position = MVP*(getRegionTransformation(data)*vec4(corner, 1.0));
+    gl_MeshVerticesNV[gl_LocalInvocationID.x].gl_Position = MVP*vec4(corner, 1.0);
 
-    int visibilityIndex = int(gl_WorkGroupID.x);
+    int visibilityIndex = (int)gl_WorkGroupID.x;
 
     regionVisibility[visibilityIndex] = uint8_t(0);
 

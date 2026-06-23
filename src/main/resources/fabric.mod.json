@@ -2,27 +2,16 @@
   "schemaVersion": 1,
   "id": "nvidium",
   "version": "${version}",
-  "custom": {
-    "commit": "${commit}",
-    "buildtime": "${buildtime}"
-  },
   "name": "Nvidium",
   "description": "Replacement rendering engine for sodium",
   "authors": [
     "Cortex"
   ],
-  "contributors": [
-    "drouarb"
-  ],
   "contact": {},
   "license": "LGPL-3.0",
   "icon": "assets/nvidium/nvidium.png",
   "environment": "client",
-  "entrypoints": {
-    "sodium:config_api_user": [
-      "me.cortex.nvidium.config.ConfigGuiBuilder"
-    ]
-  },
+  "entrypoints": {},
   "mixins": [
     "nvidium.mixins.json"
   ],

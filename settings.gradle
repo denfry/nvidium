@@ -33,12 +33,13 @@ stonecutter {
     //   1.21.10 -> Sodium 0.7.2  (G0.7)
     //   1.21.11 -> Sodium 0.8.12 (G0.8)
     //   26.1.2  -> Sodium 0.8.12 (G0.8, Java 25 / MC 26.x)
-    // NOTE: 26.1.2 is temporarily NOT registered. fabric-loom enforces JDK 25 at
-    // *configuration* time for MC 26.1.2, and that requirement poisons every Gradle
-    // invocation when the build JDK is 21. Its versions/26.1.2/gradle.properties is
-    // kept; re-add "26.1.2" below once a JDK 25 toolchain is available.
+    // FOCUS: only 1.20.1 is registered right now (user decision — perfect 1.20.1
+    // first, add the rest later). The other nodes' versions/<node>/gradle.properties
+    // are kept; re-add them here when resuming multi-version work:
+    //   "1.21" (G0.5) · "1.21.6" (G0.6) · "1.21.10" (G0.7) · "1.21.11" (G0.8)
+    //   "26.1.2" (G0.8) — also needs a JDK 25 toolchain.
     create(rootProject) {
-        versions "1.20.1", "1.21", "1.21.6", "1.21.10", "1.21.11"
-        vcsVersion = "1.21.11"
+        versions "1.20.1"
+        vcsVersion = "1.20.1"
     }
 }

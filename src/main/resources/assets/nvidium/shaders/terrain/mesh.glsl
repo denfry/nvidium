@@ -7,185 +7,130 @@
 #extension GL_NV_gpu_shader5 : require
 #extension GL_NV_bindless_texture : require
 
-#extension GL_KHR_shader_subgroup_arithmetic: require
 #extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_ballot : require
 #extension GL_KHR_shader_subgroup_vote : require
-#extension GL_KHR_shader_subgroup_shuffle : require
-
-layout(binding = 1) uniform sampler2D tex_light;
 
 #import <nvidium:occlusion/scene.glsl>
-#import <nvidium:terrain/vertex_format/vertex_format.glsl>
+#import <nvidium:terrain/fog.glsl>
 
-#ifdef RENDER_FOG
-#import <sodium:include/fog.glsl>
-#endif
-
-//It seems like for terrain at least, the sweat spot is ~16 quads per mesh invocation (even if the local size is not 32 )
 layout(local_size_x = 32) in;
 layout(triangles, max_vertices=64, max_primitives=32) out;
 
-#ifndef USE_NV_FRAGMENT_SHADER_BARYCENTRIC
 layout(location=1) out Interpolants {
-#ifdef RENDER_FOG
-    vec2 v_FragDistance;
-#endif
-    vec2 uv;
-    vec3 v_colour;
+    vec4 tint;
+    vec4 addin;
+    vec4 uv_bias_cutoff;
 } OUT[];
-#endif
 
 taskNV in Task {
-    uvec4 binStarts;
-    uvec4 binOffsets;
-
     vec3 origin;
+    uint baseOffset;
     uint quadCount;
-    uint transformationId;
+
+    //Binary search indexs and data
+    uvec4 binIa;
+    uvec4 binIb;
+    uvec4 binVa;
+    uvec4 binVb;
 };
+
+vec3 decodeVertex(Vertex v) {
+    return vec3(v.a,v.b,v.c)*(32.0f/65535)-8.0f;
+}
+
+layout(binding = 1) uniform sampler2D tex_light;
+
+vec4 sampleLight(vec2 uv) {
+    return texture(tex_light, clamp(uv / 256.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0)));
+}
+
+void processVertPair(uint id) {
+
+    Vertex A = terrainData[id];
+    Vertex B = terrainData[id|1];
+
+    //TODO: OPTIMIZE
+    uint primId = gl_LocalInvocationID.x*3;
+    uint idxBase = (gl_LocalInvocationID.x>>1)<<2;
+    vec3 posA = decodeVertex(A)+origin;
+    vec3 posB = decodeVertex(B)+origin;
+    gl_MeshVerticesNV[(gl_LocalInvocationID.x<<1)].gl_Position   = MVP*vec4(posA,1.0);
+    gl_MeshVerticesNV[(gl_LocalInvocationID.x<<1)|1].gl_Position = MVP*vec4(posB,1.0);
+
+    bool isA = (gl_LocalInvocationID.x&1)==0;
+    gl_PrimitiveIndicesNV[primId]   = (isA?0:2)+idxBase;
+    gl_PrimitiveIndicesNV[primId+1] = (isA?1:3)+idxBase;
+    gl_PrimitiveIndicesNV[primId+2] = (isA?2:0)+idxBase;
+
+    bool hasMipping = (A.d&int16_t(4))!=int16_t(0);
+    float alphaCutoff = (float[](0.0f, 0.1f,0.5f))[(A.d&int16_t(3))];
+
+    OUT[(gl_LocalInvocationID.x<<1)|0].uv_bias_cutoff = vec4(vec2(A.g,A.h)*(1f/65536), hasMipping?0.0f:-8.0f, alphaCutoff);
+    OUT[(gl_LocalInvocationID.x<<1)|1].uv_bias_cutoff = vec4(vec2(B.g,B.h)*(1f/65536), hasMipping?0.0f:-8.0f, alphaCutoff);
+
+
+    vec4 tintA = vec4(A.e&int16_t(0xFF),(A.e>>8)&int16_t(0xFF),A.f&int16_t(0xFF),(A.f>>8)&int16_t(0xFF))/255;
+    vec4 tintB = vec4(B.e&int16_t(0xFF),(B.e>>8)&int16_t(0xFF),B.f&int16_t(0xFF),(B.f>>8)&int16_t(0xFF))/255;
+    tintA *= sampleLight(vec2(int16_t(A.i),int16_t(A.j)));
+    tintA *= tintA.w;
+    tintB *= sampleLight(vec2(int16_t(B.i),int16_t(B.j)));
+    tintB *= tintB.w;
+    vec4 tintAO;
+    vec4 addiAO;
+    vec4 tintBO;
+    vec4 addiBO;
+    computeFog(isSphericalFog, posA+subchunkOffset.xyz, tintA, fogColour, fogStart, fogEnd, tintAO, addiAO);
+    computeFog(isSphericalFog, posB+subchunkOffset.xyz, tintB, fogColour, fogStart, fogEnd, tintBO, addiBO);
+    OUT[(gl_LocalInvocationID.x<<1)|0].tint = tintAO;
+    OUT[(gl_LocalInvocationID.x<<1)|0].addin = addiAO;
+    OUT[(gl_LocalInvocationID.x<<1)|1].tint = tintBO;
+    OUT[(gl_LocalInvocationID.x<<1)|1].addin = addiBO;
+
+    gl_MeshPrimitivesNV[gl_LocalInvocationID.x].gl_PrimitiveID = int(gl_GlobalInvocationID.x>>1);
+}
+
 
 
 //Do a binary search via global invocation index to determine the base offset
 // Note, all threads in the work group are probably going to take the same path
 uint getOffset() {
     uint gii = gl_GlobalInvocationID.x>>1;
-    bvec4 le = lessThan(uvec4(gii), binStarts);
-    /*
-    //This is so jank and funny
-    return dot(binOffsets,notEqual(bvec4(ge.yzw,true), not(ge.xyzw)));
-    */
 
-    //TODO:IDEA, since x is always false (i.e. binStarts[0] == 0) we can use that extra space to pack more of the offset bits
-    // this allows us to use a single uvec4 to transmit an entire section
-    // since max size is 16 bit, we need 2/3 extra bits to store worst case, which we can
-    // it does mean we need to readd the baseOffset to the task, but that contains inbuilt start offset of binOffsets.x
-    uint retval = binOffsets.w;
-    if (le.y) {//x is always true
-        retval = binOffsets.x;
-    } else if (le.z) {
-        retval = binOffsets.y;
-    } else if (le.w) {
-        retval = binOffsets.z;
+    //TODO: replace this with binary search
+    if (gii < binIa.x) {
+        return binVa.x + gii + baseOffset;
+    } else if (gii < binIa.y) {
+        return binVa.y + (gii - binIa.x) + baseOffset;
+    } else if (gii < binIa.z) {
+        return binVa.z + (gii - binIa.y) + baseOffset;
+    } else if (gii < binIa.w) {
+        return binVa.w + (gii - binIa.z) + baseOffset;
+    } else if (gii < binIb.x) {
+        return binVb.x + (gii - binIa.w) + baseOffset;
+    } else if (gii < binIb.y) {
+        return binVb.y + (gii - binIb.x) + baseOffset;
+    } else if (gii < binIb.z) {
+        return binVb.z + (gii - binIb.y) + baseOffset;
+    } else if (gii < binIb.w) {
+        return binVb.w + (gii - binIb.z) + baseOffset;
+    } else {
+        return uint(-1);
     }
-    return retval+gii;
-}
-
-mat4 transformMat;
-
-vec4 transformVertex(Vertex V) {
-    vec3 pos = decodeVertexPosition(V)+origin;
-    return MVP*(transformMat * vec4(pos,1.0));
-}
-
-Vertex Vc;
-vec4 pVc;
-Vertex V;
-vec4 pV;
-
-void putVertex(uint id, Vertex V) {
-#ifndef USE_NV_FRAGMENT_SHADER_BARYCENTRIC
-    #ifdef RENDER_FOG
-    vec3 pos = decodeVertexPosition(V)+origin;
-    vec3 exactPos = pos+subchunkOffset.xyz;
-    OUT[id].v_FragDistance = getFragDistance(exactPos);
-    #endif
-
-    OUT[id].uv = decodeVertexUV(V);
-    OUT[id].v_colour = computeMultiplier(V);
-#endif
 }
 
 void main() {
-    if (gl_LocalInvocationIndex == 0) {
-        gl_PrimitiveCountNV = 0;//Set the prim count to 0
-    }
-
-    if (quadCount<=(gl_GlobalInvocationID.x>>1)) {
-        return;
-    }
-
-    uint quadId = getOffset();
+    uint id = getOffset();
 
     //If its over, dont render
-    if (quadId == uint(-1)) {
+    if (id == uint(-1)) {
         return;
     }
-    transformMat = transformationArray[transformationId];
 
-    bool triangle1 = (gl_LocalInvocationIndex & uint(1)) == 1;
+    processVertPair(((id << 1) | (gl_LocalInvocationID.x&1)) << 1);
 
-    //Load corner point, alterenated w.r.t neighbor thread
-    Vc = terrainData[(quadId<<2)+(triangle1?2:0)];
-
-    //Load our unique vertex V1 or V3 depending on triangle0
-    V = terrainData[(quadId<<2)+(triangle1?3:1)];
-
-    //Transform common and our vertices
-    pVc = transformVertex(Vc);
-    pV = transformVertex(V);
-
-    bool draw = true;
-    bool peerDraw = true;
-
-#ifdef CULL_DEGENERATE_TRIANGLES
-    { //Compute the bounding pixels of the current triangle in the quad. note, vertex 0 and 2 are the common verticies
-        vec2 ssmin = ((pVc.xy/pVc.w)+1)*screenSize;
-        vec2 ssmax = ssmin;
-
-        //We exchange data of side thread common vertex here
-        vec2 pVc2 = subgroupShuffleXor(ssmin, 1u);
-        ssmin = min(ssmin, pVc2);
-        ssmax = max(ssmax, pVc2);
-
-        vec2 point = ((pV.xy/pV.w)+1)*screenSize;
-        vec2 tmin = min(ssmin, point);
-        vec2 tmax = max(ssmax, point);
-
-        //Possibly cull the triangles if they dont cover the center of a pixel on the screen (degen)
-        float degenBias = 0.01f;
-        draw = all(notEqual(round(tmin-degenBias),round(tmax+degenBias)));
-
-        // Exchage results with neighbor
-        peerDraw = subgroupShuffleXor(draw, 1u);
-
-        // Abort if quad got culled
-        if (!(draw || peerDraw)) {
-            return;
-        }
+    if (gl_LocalInvocationID.x == 0) {
+        //Remaining quads in workgroup
+        gl_PrimitiveCountNV = min(uint(int(quadCount)-int(gl_WorkGroupID.x<<4))<<1, 32);//2 primatives per quad
     }
-    #endif
-
-    uint qId = (gl_LocalInvocationIndex&uint(~1))*2;
-    //emit the common vertex
-    gl_MeshVerticesNV[qId+uint(triangle1)].gl_Position = pVc;
-    putVertex(qId+uint(triangle1), Vc);
-    if (draw) {
-        uint uId = qId+uint(triangle1)+2;
-        //emit our vertex
-        gl_MeshVerticesNV[uId].gl_Position = pV;
-        putVertex(uId, V);
-
-        //Unsure if this is needed
-        //subgroupBarrier();
-        uint triId = subgroupExclusiveAdd(1);
-
-        //Note indexing is bit funky here since we inserted in inverted order vert 0 is at idx 1 and vert 2 is at 0
-        gl_PrimitiveIndicesNV[triId * 3 + 0] = qId+uint(triangle1); // Common vertex 1
-        gl_PrimitiveIndicesNV[triId * 3 + 1] = uId; //Emit unique vertex
-        gl_PrimitiveIndicesNV[triId * 3 + 2] = qId+uint(!triangle1); // Common vertex 2
-
-        //Emit primitive
-        gl_MeshPrimitivesNV[triId].gl_PrimitiveID = int(quadId<<1) | int(triangle1);
-
-        uint triCount = subgroupMax(triId);
-        if (subgroupElect()) {
-            gl_PrimitiveCountNV = triCount+1;
-            #ifdef STATISTICS_CULL
-            atomicAdd(statistics_buffer+3, (32-1)-triCount); // Count culled triangles
-            #endif
-        }
-    }
-
-    //Common vertex depending on warp id
-    //putVertex(vertBase, triangle0 ? V0 : V2);
 }

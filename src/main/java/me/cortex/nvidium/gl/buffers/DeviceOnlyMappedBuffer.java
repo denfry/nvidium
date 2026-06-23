@@ -12,7 +12,7 @@ import static org.lwjgl.opengl.NVShaderBufferLoad.*;
 public class DeviceOnlyMappedBuffer extends GlObject implements IDeviceMappedBuffer {
     public final long size;
     public final long addr;
-    public DeviceOnlyMappedBuffer(long size) {
+    public DeviceOnlyMappedBuffer(long size) {//TODO: Make the access flag be specified so more optimization go brr
         super(glCreateBuffers());
         this.size = size;
         glNamedBufferStorage(id, size, 0);
@@ -27,23 +27,11 @@ public class DeviceOnlyMappedBuffer extends GlObject implements IDeviceMappedBuf
 
     @Override
     public void delete() {
-        super.free0();
-        glMakeNamedBufferNonResidentNV(id);
         glDeleteBuffers(id);
     }
 
     @Override
     public long getDeviceAddress() {
         return addr;
-    }
-
-    @Override
-    public void free() {
-        this.delete();
-    }
-
-    @Override
-    public long getSize() {
-        return this.size;
     }
 }

@@ -1,21 +1,19 @@
 {
   "required": true,
-  "package": "me.cortex.nvidium.mixin",
+  "package": "me.cortex.nvidium.sodiumCompat.mixin",
   "compatibilityLevel": "JAVA_17",
   "client": [
-    "minecraft.MixinFogRenderer",
-    "minecraft.MixinGameRenderer",
-    "minecraft.MixinGlDevice",
-    "minecraft.TextureAtlasAccessor",
-    "sodium.MixinChunkBuilderMeshingTask",
-    "sodium.MixinChunkBuildOutput",
-    "sodium.MixinChunkJobQueue",
-    "sodium.MixinOptionFlag",
-    "sodium.MixinRenderRegionManager",
-    "sodium.MixinRenderSection",
-    "sodium.MixinRenderSectionManager",
-    "sodium.MixinSodiumWorldRenderer",
-    "sodium.ViewportAccessor"
+    "LightMapAccessor",
+    "MixinBackgroundRenderer",
+    "MixinChunkRenderBoundsBuilder",
+    "MixinGameRenderer",
+    "MixinRenderRegionManager",
+    "MixinRenderSection",
+    "MixinRenderSectionManager",
+    "MixinSodiumOptionsGUI",
+    "MixinSodiumWorldRenderer",
+    "MixinWindow",
+    "MixinWorldRenderer"
   ],
   "injectors": {
     "defaultRequire": 1
