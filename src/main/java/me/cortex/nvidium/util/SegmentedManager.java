@@ -6,9 +6,12 @@ import it.unimi.dsi.fastutil.longs.LongRBTreeSet;
 
 import java.util.Random;
 
-//FIXME: NOTE: if there is a free block of size > 2^30 EVERYTHING BREAKS, need to either increase size
-// or automatically split and manage multiple blocks which is very painful
-//OR instead of addr, defer to a long[] and use indicies
+//NOTE: sizes are packed into SIZE_BITS (30) bits, so no single allocation or free block may
+// exceed SIZE_MSK (2^30-1) units. alloc() now rejects oversized requests up front (fail loud
+// instead of silently corrupting the packing). A *merged* free block could only exceed the bound
+// if totalSize did, i.e. if the backing buffer held > 2^30 units (~80 GB of quads); callers cap
+// usage far below that via the VRAM budget, so that path is unreachable in practice. Lifting the
+// limit entirely would need a long[]-indexed rewrite or automatic multi-block splitting.
 
 //TODO: replace the LongAVLTreeSet with a custom implementation that doesnt cause allocations when searching
 // and see if something like a RBTree is any better
@@ -34,7 +37,7 @@ public class SegmentedManager {
     }*/
 
     public long alloc(int size) {//TODO: add alignment support
-        if (size == 0) throw new IllegalArgumentException();
+        if (size <= 0 || size > SIZE_MSK) throw new IllegalArgumentException("alloc size out of range: " + size);
         //This is stupid, iterator is not inclusive
         var iter = FREE.iterator(((long) size << ADDR_BITS)-1);
         if (!iter.hasNext()) {//No free space for allocation
