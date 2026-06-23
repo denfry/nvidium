@@ -3,21 +3,26 @@ plugins {
     id 'maven-publish'
 }
 
+// ---------------------------------------------------------------------------
+// Stonecutter version template. Evaluated once per registered node.
+// Per-node values (minecraft_version, sodium_dep, ...) come from
+// versions/<node>/gradle.properties; shared values from root gradle.properties.
+// ---------------------------------------------------------------------------
+
+def mcVersion = stonecutter.current.version
+
 def gitCommitHash = { ->
     try {
-        ExecOutput result = providers.exec {
+        def result = providers.exec {
             commandLine = ['git', 'rev-parse', '--short', 'HEAD']
             ignoreExitValue = true
         }
-
-        if (result.getResult().get().getExitValue() != 0) {
-            return "<UnknownCommit>";
-        } else {
-            return result.standardOutput.asText.get().strip();
+        if (result.result.get().exitValue != 0) {
+            return "<UnknownCommit>"
         }
-    } catch (Exception e) {
-        e.printStackTrace()
-        return "<UnknownCommit>";
+        return result.standardOutput.asText.get().strip()
+    } catch (Exception ignored) {
+        return "<UnknownCommit>"
     }
 }
 def buildtime = System.currentTimeSeconds()
@@ -25,9 +30,11 @@ def buildtime = System.currentTimeSeconds()
 version = project.mod_version
 group = project.maven_group
 
+def javaVer = (project.findProperty('java_version') ?: '21') as int
+
 java {
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
+    sourceCompatibility = JavaVersion.toVersion(javaVer)
+    targetCompatibility = JavaVersion.toVersion(javaVer)
 }
 
 apply plugin: "fabric-loom"
@@ -35,8 +42,13 @@ apply plugin: "fabric-loom"
 loom {
     runs {
         it.configureEach {
-            vmArgs("-Xmx16G")
+            vmArgs("-Xmx8G")
         }
+    }
+    // Older generations ship an access widener; newer ones don't.
+    def aw = file("src/main/resources/nvidium.accesswidener")
+    if (aw.exists()) {
+        accessWidenerPath = aw
     }
 }
 
@@ -45,12 +57,19 @@ base {
 }
 
 processResources {
-    def version = project.version
-
-    inputs.properties("version": version, "commit": gitCommitHash, "buildtime": buildtime)
-
+    def v = project.version
+    // fabric.mod.json carries placeholders that vary per node.
+    def modJsonProps = [
+            "commit"        : gitCommitHash(),
+            "version"       : v,
+            "buildtime"     : buildtime,
+            "mc_depend"     : project.mc_depend,
+            "sodium_depend" : project.sodium_depend,
+            "loader_depends": project.findProperty('loader_depends') ?: '>=0.15'
+    ]
+    inputs.properties(modJsonProps)
     filesMatching("fabric.mod.json") {
-        expand "commit": gitCommitHash, "version": version, "buildtime": buildtime
+        expand(modJsonProps)
     }
 }
 
@@ -72,33 +91,39 @@ repositories {
     }
     maven {
         name = "CaffeineMC"
-        url = "https://maven.caffeinemc.net/releases" // or /snapshots
+        url = "https://maven.caffeinemc.net/releases"
     }
 }
 
 dependencies {
-    // To change the versions see the gradle.properties file
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
+
+    // Mojmap (+ Parchment param names where available) across all versions.
     mappings loom.layered() {
         officialMojangMappings()
-        parchment("org.parchmentmc.data:parchment-${project.minecraft_version}:${project.parchmentmc_mappings}@zip")
+        if (project.hasProperty('parchmentmc_mappings') && !project.parchmentmc_mappings.toString().isBlank()) {
+            parchment("org.parchmentmc.data:parchment-${project.minecraft_version}:${project.parchmentmc_mappings}@zip")
+        }
     }
+
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
 
-    // Fabric API
-    modImplementation(fabricApi.module("fabric-api-base", project.fabric_version))
-    modImplementation(fabricApi.module("fabric-block-view-api-v2", project.fabric_version))
-    modImplementation(fabricApi.module("fabric-rendering-fluids-v1", project.fabric_version))
-    modImplementation(fabricApi.module("fabric-renderer-api-v1", project.fabric_version))
+    // --- Fabric API ---
+    // The individual module names drift across MC versions (block-view -> block-getter,
+    // renderer-api added then dropped, etc). Depending on the full bundle for *compilation*
+    // sidesteps all of that; actual runtime requirements are declared in fabric.mod.json.
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
 
-    modImplementation(fabricApi.module("fabric-resource-loader-v0", project.fabric_version))
+    // --- Sodium (coordinate shape differs by generation) ---
+    //   G0.4-G0.7: single Modrinth artifact (maven.modrinth:sodium:...)
+    //   G0.8:      split CaffeineMC artifacts (sodium-fabric + sodium-fabric-api)
+    modImplementation(project.sodium_dep.toString())
+    if (project.hasProperty('sodium_api_dep') && !project.sodium_api_dep.toString().isBlank()) {
+        modImplementation(project.sodium_api_dep.toString())
+    }
 
-    modImplementation "net.caffeinemc:sodium-fabric:0.8.12+mc1.21.11"
-    modImplementation "net.caffeinemc:sodium-fabric-api:0.8.12+mc1.21.11"
-
-    //modImplementation "maven.modrinth:c2me-fabric:0.2.0+alpha.10.49+1.19.4"
-    //modImplementation "maven.modrinth:chunks-fade-in:v1.0.3-1.19.4"
-    //modImplementation "maven.modrinth:immersiveportals:v2.7.3-mc1.19.4"
-    modCompileOnly "maven.modrinth:iris:1.10.4+1.21.11-fabric"
+    // --- Iris (compile-only soft dependency) ---
+    if (project.hasProperty('iris_dep') && !project.iris_dep.toString().isBlank()) {
+        modCompileOnly(project.iris_dep.toString())
+    }
 }
-

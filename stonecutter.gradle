@@ -1,0 +1,9 @@
+// Stonecutter controller (root project). Runs once during configuration.
+// The per-version build logic lives in build.gradle (centralScript), evaluated per node.
+plugins {
+    id 'dev.kikugie.stonecutter'
+}
+
+// The active version dictates the state of //? conditional comments in src/.
+// Must be assigned exactly once. Switch with: ./gradlew "Set active project to <ver>"
+stonecutter.active "1.21.11"
