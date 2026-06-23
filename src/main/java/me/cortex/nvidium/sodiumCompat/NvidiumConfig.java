@@ -3,6 +3,7 @@ package me.cortex.nvidium.sodiumCompat;
 import com.google.gson.FieldNamingPolicy;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonParseException;
 import com.google.gson.annotations.Expose;
 import me.cortex.nvidium.Nvidium;
 import net.fabricmc.loader.api.FabricLoader;
@@ -39,9 +40,16 @@ public class NvidiumConfig {
         var path = getConfigPath();
         if (Files.exists(path)) {
             try (FileReader reader = new FileReader(path.toFile())) {
-                return GSON.fromJson(reader, NvidiumConfig.class);
-            } catch (IOException e) {
-                Nvidium.LOGGER.error("Could not parse config", e);
+                //fromJson throws JsonParseException (a RuntimeException) on malformed JSON and
+                //returns null on an empty/"null" file; either previously crashed startup or left
+                //Nvidium.config null. Fall back to defaults in both cases.
+                NvidiumConfig parsed = GSON.fromJson(reader, NvidiumConfig.class);
+                if (parsed != null) {
+                    return parsed;
+                }
+                Nvidium.LOGGER.error("Config file was empty or invalid, using defaults");
+            } catch (IOException | JsonParseException e) {
+                Nvidium.LOGGER.error("Could not parse config, using defaults", e);
             }
         }
         return new NvidiumConfig();
