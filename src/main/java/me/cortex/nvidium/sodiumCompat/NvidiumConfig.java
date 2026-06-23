@@ -10,8 +10,10 @@ import net.fabricmc.loader.api.FabricLoader;
 import java.io.FileReader;
 import java.io.IOException;
 import java.lang.reflect.Modifier;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 
 public class NvidiumConfig {
     //The options
@@ -46,11 +48,25 @@ public class NvidiumConfig {
     }
 
     public void save() {
-        //Unsafe, todo: fixme! needs to be atomic!
+        //Write to a sibling temp file then move it into place, so a crash mid-write
+        //leaves the previous config intact instead of a truncated/corrupt file.
+        var path = getConfigPath();
+        var tmp = path.resolveSibling("nvidium-config.json.tmp");
         try {
-            Files.writeString(getConfigPath(), GSON.toJson(this));
+            Files.writeString(tmp, GSON.toJson(this));
+            try {
+                Files.move(tmp, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException atomicUnsupported) {
+                //Some filesystems can't do an atomic rename; fall back to a plain replace.
+                Files.move(tmp, path, StandardCopyOption.REPLACE_EXISTING);
+            }
         } catch (IOException e) {
             Nvidium.LOGGER.error("Failed to write config file", e);
+            try {
+                Files.deleteIfExists(tmp);
+            } catch (IOException cleanupFailure) {
+                Nvidium.LOGGER.warn("Could not remove temp config file", cleanupFailure);
+            }
         }
     }
 
