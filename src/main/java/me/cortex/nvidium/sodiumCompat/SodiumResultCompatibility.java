@@ -7,8 +7,17 @@ import org.joml.Vector3i;
 import org.lwjgl.system.MemoryUtil;
 
 public class SodiumResultCompatibility {
+    //enum.values() clones its array on every call; cache it since this is hit per face per
+    //chunk upload. ModelQuadFacing is a fixed enum, so the cached array is safe to reuse.
+    private static final ModelQuadFacing[] FACINGS = ModelQuadFacing.values();
+
     public static int getTotalGeometryQuadCount(ChunkBuildResult result) {
-        return result.meshes.values().stream().mapToInt(a->(a.getVertexData().vertexBuffer().getLength()/20)/4).sum();
+        //Plain loop instead of a Stream pipeline; this runs on every chunk upload.
+        int total = 0;
+        for (var mesh : result.meshes.values()) {
+            total += (mesh.getVertexData().vertexBuffer().getLength()/20)/4;
+        }
+        return total;
     }
 
     //Everything is /6*4 cause its in indices and we want verticies
@@ -20,7 +29,7 @@ public class SodiumResultCompatibility {
         var translucentData  = result.meshes.get(BlockRenderPass.TRANSLUCENT);
         if (translucentData != null) {
             for (int i = 0; i < 7; i++) {
-                var segment = translucentData.getParts().get(ModelQuadFacing.values()[i]);
+                var segment = translucentData.getParts().get(FACINGS[i]);
                 if (segment != null) {
                     long srcVert = MemoryUtil.memAddress(translucentData.getVertexData().vertexBuffer().getDirectBuffer());
                     long srcIdx = segment.elementPointer() + MemoryUtil.memAddress(translucentData.getVertexData().indexBuffer().getDirectBuffer());
@@ -74,8 +83,7 @@ public class SodiumResultCompatibility {
         for (int i = 0; i < 7; i++) {
             int poff = offset;
             if (solid != null) {
-                //TODO Optimize from .values()
-                var segment = solid.getParts().get(ModelQuadFacing.values()[i]);
+                var segment = solid.getParts().get(FACINGS[i]);
                 if (segment != null) {
                     long srcVert = MemoryUtil.memAddress(solid.getVertexData().vertexBuffer().getDirectBuffer());
                     long srcIdx = segment.elementPointer() + MemoryUtil.memAddress(solid.getVertexData().indexBuffer().getDirectBuffer());
@@ -118,7 +126,7 @@ public class SodiumResultCompatibility {
                 }
             }
             if (cutout != null) {
-                var segment = cutout.getParts().get(ModelQuadFacing.values()[i]);
+                var segment = cutout.getParts().get(FACINGS[i]);
                 if (segment != null) {
                     long srcVert = MemoryUtil.memAddress(cutout.getVertexData().vertexBuffer().getDirectBuffer());
                     long srcIdx = segment.elementPointer() + MemoryUtil.memAddress(cutout.getVertexData().indexBuffer().getDirectBuffer());
@@ -161,7 +169,7 @@ public class SodiumResultCompatibility {
                 }
             }
             if (mipped != null) {
-                var segment = mipped.getParts().get(ModelQuadFacing.values()[i]);
+                var segment = mipped.getParts().get(FACINGS[i]);
                 if (segment != null) {
                     long srcVert = MemoryUtil.memAddress(mipped.getVertexData().vertexBuffer().getDirectBuffer());
                     long srcIdx = segment.elementPointer() + MemoryUtil.memAddress(mipped.getVertexData().indexBuffer().getDirectBuffer());
