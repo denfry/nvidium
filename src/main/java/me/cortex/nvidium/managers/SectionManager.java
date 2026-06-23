@@ -1,6 +1,7 @@
 package me.cortex.nvidium.managers;
 
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
+import me.cortex.nvidium.Nvidium;
 import me.cortex.nvidium.gl.RenderDevice;
 import me.cortex.nvidium.gl.buffers.IDeviceMappedBuffer;
 import me.cortex.nvidium.sodiumCompat.SodiumResultCompatibility;
@@ -24,6 +25,9 @@ public class SectionManager {
     private final Long2IntOpenHashMap sectionOffset = new Long2IntOpenHashMap();
 
     private final Long2IntOpenHashMap terrainDataLocation = new Long2IntOpenHashMap();
+
+    //Logged once when region capacity is first exceeded, to avoid spamming the log every frame.
+    private boolean warnedRegionCapacity = false;
 
     public final UploadingBufferStream uploadStream;
 
@@ -68,10 +72,21 @@ public class SectionManager {
         }
         RenderSection section = result.render;
         long key = getSectionKey(section.getChunkX(), section.getChunkY(), section.getChunkZ());
-        int sectionIdx = sectionOffset.computeIfAbsent(//Get or fetch the section meta index
-                key,
-                a->regionManager.createSectionIndex(uploadStream, section.getChunkX(), section.getChunkY(), section.getChunkZ())
-        );
+        int sectionIdx = sectionOffset.get(key);//Get or fetch the section meta index
+        if (sectionIdx == -1) {
+            sectionIdx = regionManager.createSectionIndex(uploadStream, section.getChunkX(), section.getChunkY(), section.getChunkZ());
+            if (sectionIdx == -1) {
+                //Region capacity exhausted: drop this section rather than indexing the region
+                //arrays/GPU buffers out of bounds. The VRAM watchdog evicts a region shortly
+                //after, and the section is re-added on a later rebuild.
+                if (!warnedRegionCapacity) {
+                    warnedRegionCapacity = true;
+                    Nvidium.LOGGER.warn("Region capacity ({}) exceeded; dropping sections until regions are evicted. Consider lowering render distance or extra render distance.", regionManager.maxRegions());
+                }
+                return;
+            }
+            sectionOffset.put(key, sectionIdx);
+        }
 
 
 

@@ -116,9 +116,22 @@ public class RegionManager {
         return ChunkSectionPos.asLong(sectionX>>3, sectionY>>2, sectionZ>>3);
     }
 
+    //Returns -1 when region capacity is exhausted (more live regions than the estimated
+    //maxRegions). Callers must drop the section in that case rather than proceeding.
     public int createSectionIndex(UploadingBufferStream uploadStream, int sectionX, int sectionY, int sectionZ) {
         long key = getRegionKey(sectionX, sectionY, sectionZ);
-        int idx = regionMap.computeIfAbsent(key, k -> idProvider.provide());
+        int idx = regionMap.get(key);
+        if (idx == -1) {
+            //A new region is needed. idProvider hands out monotonically increasing ids when
+            //it has no freed ones, so guard against indexing regions[]/the GPU buffers out of
+            //bounds when more regions are loaded than the maxRegions estimate provisioned.
+            idx = idProvider.provide();
+            if (idx >= regions.length) {
+                idProvider.release(idx);//Roll back so idProvider state stays consistent
+                return -1;
+            }
+            regionMap.put(key, idx);
+        }
         Region region = regions[idx];
         Region region2 = region;
         if (region == null) {
