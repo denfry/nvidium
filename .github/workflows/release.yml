@@ -57,12 +57,14 @@ jobs:
             echo "Tag ${{ steps.ver.outputs.tag }} is new — will release."
           fi
 
-      - name: Set up JDK 17
+      # Gradle/Stonecutter must run on JDK 21+ (Stonecutter 0.9.6 requires it);
+      # the 1.20.1 node still compiles to Java 17 bytecode (see build.gradle).
+      - name: Set up JDK 21
         if: steps.check.outputs.exists == 'false'
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
           cache: gradle
 
       - name: Make gradlew executable

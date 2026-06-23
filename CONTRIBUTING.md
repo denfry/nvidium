@@ -24,8 +24,9 @@ source tree.
 ./gradlew build
 ```
 
-The first build decompiles Minecraft and may take several minutes; later builds are incremental. The 1.20.1 node uses
-**Java 17** and **Yarn** mappings.
+The first build decompiles Minecraft and may take several minutes; later builds are incremental. The 1.20.1 node
+compiles to **Java 17** bytecode and uses **Yarn** mappings, but you must **run Gradle itself on JDK 21+** —
+Stonecutter 0.9.6 requires it.
 
 ## Hardware-testing constraint
 

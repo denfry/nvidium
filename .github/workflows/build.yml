@@ -21,12 +21,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # The active Stonecutter node (1.20.1) targets Java 17.
-      - name: Set up JDK 17
+      # Gradle/Stonecutter must run on JDK 21+ (Stonecutter 0.9.6 requires it).
+      # The 1.20.1 node still compiles to Java 17 bytecode via build.gradle's
+      # sourceCompatibility/targetCompatibility, so 21 here is the runtime, not the target.
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
           cache: gradle
 
       - name: Make gradlew executable
