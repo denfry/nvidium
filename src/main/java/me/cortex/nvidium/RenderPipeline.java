@@ -93,6 +93,11 @@ public class RenderPipeline {
     //place instead of allocating a fresh IntAVLTreeSet (+ a node per region) every frame.
     private final int[] regionSortBuffer;
 
+    //Reverse of regionMap for this frame: region id -> its index in the visible list. Only entries
+    //whose id is set in regionVisibilityTracker are valid this frame. Lets the player-region marking
+    //look regions up directly instead of scanning the whole visible list.
+    private final int[] regionIdToVisibleIndex;
+
     //Max memory that the gpu can use to store geometry in mb
     private long max_geometry_memory;
     private long last_sample_time;
@@ -122,6 +127,7 @@ public class RenderPipeline {
 
         regionVisibilityTracker = new BitSet(maxRegions);
         regionSortBuffer = new int[maxRegions];
+        regionIdToVisibleIndex = new int[maxRegions];
 
         regionVisibilityTracking = new RegionVisibilityTracker(downloadStream, maxRegions);
 
@@ -145,7 +151,6 @@ public class RenderPipeline {
 
         int visibleRegions = 0;
 
-        long queryAddr = 0;
         var rm = sectionManager.getRegionManager();
         short[] regionMap;
         //Enqueue all the visible regions
@@ -178,10 +183,10 @@ public class RenderPipeline {
             Arrays.sort(regionSortBuffer, 0, visibleRegions);//Nearest-first by packed key
             regionMap = new short[visibleRegions];
             long addr = sectionManager.uploadStream.getUpload(sceneUniform, SCENE_SIZE, visibleRegions*2);
-            queryAddr = addr;//This is ungodly hacky
             for (int j = 0; j < visibleRegions; j++) {
                 int packed = regionSortBuffer[j];
                 regionMap[j] = (short) packed;
+                regionIdToVisibleIndex[packed & 0xFFFF] = j;
                 MemoryUtil.memPutShort(addr+((long) j <<1), (short) packed);
             }
 
@@ -262,17 +267,19 @@ public class RenderPipeline {
         //glMemoryBarrier(GL_SHADER_GLOBAL_ACCESS_BARRIER_BIT_NV);
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
-        {//This uses the clear buffer to set the byte for the region the player is standing in, this should be cheaper than comparing it on the gpu
-            outerLoop:
-            for (int i = 0; i < visibleRegions; i++) {
-                int rid = MemoryUtil.memGetShort(queryAddr+(i<<1));
-                for (int x = -1; x <= 1; x++) {
-                    for (int y = -1; y <= 1; y++) {
-                        for (int z = -1; z <= 1; z++) {
-                            if (rm.regionIsAtPos(rid, (blockPos.x+x) >> 7, (blockPos.y+y) >> 6, (blockPos.z+z) >> 7)) {
-                                setRegionVisible(i);
-                                continue outerLoop;
-                            }
+        {//Mark the region(s) the player occupies as visible so they aren't occlusion-culled. The 27
+         //block neighbours collapse to a <=2x2x2 box of region coords (a region spans 128x64x128
+         //blocks), so look each up directly instead of scanning every visible region — this was
+         //O(visibleRegions*27) and is now O(<=8), which matters at high render distances.
+            int rx0 = (blockPos.x - 1) >> 7, rx1 = (blockPos.x + 1) >> 7;
+            int ry0 = (blockPos.y - 1) >> 6, ry1 = (blockPos.y + 1) >> 6;
+            int rz0 = (blockPos.z - 1) >> 7, rz1 = (blockPos.z + 1) >> 7;
+            for (int rx = rx0; rx <= rx1; rx++) {
+                for (int ry = ry0; ry <= ry1; ry++) {
+                    for (int rz = rz0; rz <= rz1; rz++) {
+                        int id = rm.regionKeyToId(RegionManager.getRegionKey(rx << 3, ry << 2, rz << 3));
+                        if (id != -1 && regionVisibilityTracker.get(id)) {
+                            setRegionVisible(regionIdToVisibleIndex[id]);
                         }
                     }
                 }
