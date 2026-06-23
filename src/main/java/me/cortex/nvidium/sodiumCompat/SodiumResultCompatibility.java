@@ -216,19 +216,20 @@ public class SodiumResultCompatibility {
     }
 
     //TODO: FIXME: dont use these bounds as they are not accurate (e.g. grass can take up multiple blocks cause vertices extend outside of block)
-    public static Vector3i getMinBounds(ChunkBuildResult result) {
+    //Writes into the supplied vector (reused per upload) rather than allocating one per chunk.
+    public static Vector3i getMinBounds(ChunkBuildResult result, Vector3i dest) {
         int mx = (int) (result.data.getBounds().x1 + 0.5f - result.render.getOriginX());
         int my = (int) (result.data.getBounds().y1 + 0.5f - result.render.getOriginY());
         int mz = (int) (result.data.getBounds().z1 + 0.5f - result.render.getOriginZ());
         mx = Math.min(15, mx);
         my = Math.min(15, my);
         mz = Math.min(15, mz);
-        return new Vector3i(mx,my,mz);
+        return dest.set(mx,my,mz);
     }
 
     //Note: this is adjusted since you cant ever have a size == 0 (the chunk would be air)
     // so its size -1
-    public static Vector3i getSizeBounds(ChunkBuildResult result) {
+    public static Vector3i getSizeBounds(ChunkBuildResult result, Vector3i dest) {
         int sx = (int)Math.ceil(result.data.getBounds().x2-result.data.getBounds().x1-1);
         int sy = (int)Math.ceil(result.data.getBounds().y2-result.data.getBounds().y1-1);
         int sz = (int)Math.ceil(result.data.getBounds().z2-result.data.getBounds().z1-1);
@@ -241,6 +242,6 @@ public class SodiumResultCompatibility {
         sx = Math.min(15, sx);
         sy = Math.min(15, sy);
         sz = Math.min(15, sz);
-        return new Vector3i(sx,sy,sz);
+        return dest.set(sx,sy,sz);
     }
 }

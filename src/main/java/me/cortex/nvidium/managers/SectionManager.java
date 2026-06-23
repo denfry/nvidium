@@ -12,7 +12,6 @@ import me.jellysquid.mods.sodium.client.render.chunk.compile.ChunkBuildResult;
 import me.jellysquid.mods.sodium.client.render.chunk.data.ChunkRenderData;
 import net.minecraft.util.math.ChunkSectionPos;
 import org.joml.Vector3i;
-import org.joml.Vector4i;
 import org.lwjgl.system.MemoryUtil;
 
 public class SectionManager {
@@ -28,6 +27,11 @@ public class SectionManager {
 
     //Logged once when region capacity is first exceeded, to avoid spamming the log every frame.
     private boolean warnedRegionCapacity = false;
+
+    //Reused per chunk upload (always main thread) to keep the upload path allocation-free.
+    private final short[] reusableOffsets = new short[8];
+    private final Vector3i reusableMin = new Vector3i();
+    private final Vector3i reusableSize = new Vector3i();
 
     public final UploadingBufferStream uploadStream;
 
@@ -97,22 +101,26 @@ public class SectionManager {
         int addr = terrainAreana.allocQuads(geometrySize);
         terrainDataLocation.put(key, addr);
         long geoUpload = terrainAreana.upload(uploadStream, addr);
-        short[] offsets = new short[8];
+        short[] offsets = reusableOffsets;
         //Upload all the geometry grouped by face
         SodiumResultCompatibility.uploadChunkGeometry(geoUpload, offsets, result);
 
 
 
         long segment = uploadStream.getUpload(sectionBuffer, (long) sectionIdx * SECTION_SIZE, SECTION_SIZE);
-        Vector3i min  = SodiumResultCompatibility.getMinBounds(result);
-        Vector3i size = SodiumResultCompatibility.getSizeBounds(result);
+        Vector3i min  = SodiumResultCompatibility.getMinBounds(result, reusableMin);
+        Vector3i size = SodiumResultCompatibility.getSizeBounds(result, reusableSize);
 
 
         int px = section.getChunkX()<<8  | size.x<<4 | min.x;
         int py = section.getChunkY()<<24 | size.y<<4 | min.y;
         int pz = section.getChunkZ()<<8  | size.z<<4 | min.z;
         int pw = addr;
-        new Vector4i(px, py, pz, pw).getToAddress(segment);
+        //Write px,py,pz,pw as four ints (same layout as Vector4i.getToAddress) without allocating.
+        MemoryUtil.memPutInt(segment,    px);
+        MemoryUtil.memPutInt(segment+4,  py);
+        MemoryUtil.memPutInt(segment+8,  pz);
+        MemoryUtil.memPutInt(segment+12, pw);
         segment += 4*4;
 
         //Write the geometry offsets, packed into ints
