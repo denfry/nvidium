@@ -334,7 +334,12 @@ public class RenderPipeline {
         }
 
         if (sectionManager.terrainAreana.getUsedMB()>(max_geometry_memory-50)) {
-            removeRegion(regionVisibilityTracking.findMostLikelyLeastSeenRegion(sectionManager.getRegionManager().maxRegionIndex()));
+            //findMostLikelyLeastSeenRegion returns -1 until some region has accumulated
+            //enough visibility samples; guard against removeRegion(-1) (would index regions[-1]).
+            int leastSeen = regionVisibilityTracking.findMostLikelyLeastSeenRegion(sectionManager.getRegionManager().maxRegionIndex());
+            if (leastSeen != -1) {
+                removeRegion(leastSeen);
+            }
         }
     }
 
@@ -351,6 +356,12 @@ public class RenderPipeline {
     private void removeRegion(int id) {
         sectionManager.removeRegionById(id);
         regionVisibilityTracking.resetRegion(id);
+        //The region id can be recycled by a later region; reset its CPU visibility bit and
+        //GPU per-section visibility so the reused id does not inherit stale visibility state.
+        regionVisibilityTracker.clear(id);
+        if (Nvidium.config.enable_temporal_coherence) {
+            glClearNamedBufferSubData(sectionVisibility.getId(), GL_R8UI, (long) id << 8, 255, GL_RED_INTEGER, GL_UNSIGNED_BYTE, new int[]{0});
+        }
     }
 
     private void setRegionVisible(long rid) {

@@ -71,15 +71,19 @@ public class PersistentSparseAddressableBuffer extends GlObject implements IDevi
     }
 
     public void ensureAllocated(long addr, long size) {
+        // pend is the exclusive ceiling page index for the byte range [addr, addr+size);
+        // the spanned pages are [pstart, pend), i.e. (pend - pstart) pages. The previous
+        // (pend - pstart + 1) over-committed one extra page per allocation (wasted VRAM and,
+        // at the very end of the buffer, a commit past its storage -> GL error).
         int pstart = (int) (addr/PAGE_SIZE);
         int pend   = (int) ((addr+size+PAGE_SIZE-1)/PAGE_SIZE);
-        allocatePages(pstart, pend-pstart+1);
+        allocatePages(pstart, pend-pstart);
     }
 
     public void deallocate(long addr, long size) {
         int pstart = (int) (addr/PAGE_SIZE);
         int pend   = (int) ((addr+size+PAGE_SIZE-1)/PAGE_SIZE);
-        deallocatePages(pstart, pend-pstart+1);
+        deallocatePages(pstart, pend-pstart);
     }
 
     @Override
