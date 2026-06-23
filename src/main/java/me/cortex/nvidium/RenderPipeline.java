@@ -334,13 +334,37 @@ public class RenderPipeline {
         }
 
         if (sectionManager.terrainAreana.getUsedMB()>(max_geometry_memory-50)) {
-            //findMostLikelyLeastSeenRegion returns -1 until some region has accumulated
-            //enough visibility samples; guard against removeRegion(-1) (would index regions[-1]).
-            int leastSeen = regionVisibilityTracking.findMostLikelyLeastSeenRegion(sectionManager.getRegionManager().maxRegionIndex());
+            var rmgr = sectionManager.getRegionManager();
+            //Primary heuristic: evict the region that has been in-frustum but unseen the longest.
+            //It returns -1 until some region has accumulated enough visibility samples, so when we
+            //are over budget with no samples yet (e.g. right after a teleport loads a large area)
+            //fall back to evicting the spatially furthest region. Without this the geometry buffer
+            //stays full and never frees, starving new uploads at high render distances.
+            int leastSeen = regionVisibilityTracking.findMostLikelyLeastSeenRegion(rmgr.maxRegionIndex());
+            if (leastSeen == -1) {
+                leastSeen = findFurthestRegion(rmgr, chunkPos.x, chunkPos.y, chunkPos.z);
+            }
             if (leastSeen != -1) {
                 removeRegion(leastSeen);
             }
         }
+    }
+
+    //Fallback eviction target when no region has accumulated visibility samples yet: the region
+    //furthest from the camera, which is the cheapest to drop and re-stream.
+    private int findFurthestRegion(RegionManager rm, int camChunkX, int camChunkY, int camChunkZ) {
+        int furthest = -1;
+        int maxDist = -1;
+        int maxIndex = rm.maxRegionIndex();
+        for (int i = 0; i < maxIndex; i++) {
+            if (!rm.regionExists(i)) continue;
+            int dist = rm.distance(i, camChunkX, camChunkY, camChunkZ);
+            if (dist > maxDist) {
+                maxDist = dist;
+                furthest = i;
+            }
+        }
+        return furthest;
     }
 
     private void update_allowed_memory() {
