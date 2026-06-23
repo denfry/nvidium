@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Upstream Nvidium (MCRcortex)
+    url: https://github.com/MCRcortex/nvidium/issues
+    about: For issues with the original, officially distributed mod, report upstream.
+  - name: Sodium
+    url: https://github.com/CaffeineMC/sodium/issues
+    about: For rendering issues that also occur without Nvidium installed.

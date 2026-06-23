@@ -1,0 +1,51 @@
+name: Bug report
+description: Report a crash or incorrect rendering in this fork of Nvidium
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please remember Nvidium **requires an NVIDIA Turing+ GPU**
+        (GTX 1600 series or newer); AMD/Intel GPUs are not supported.
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Minecraft, Sodium, Fabric Loader and Nvidium versions.
+      placeholder: "MC 1.20.1 · Sodium 0.4.10 · Fabric Loader 0.16.13 · Nvidium 0.4.0-1.20.1"
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU & driver
+      placeholder: "RTX 3060, driver 555.xx"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you see, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / crash report
+      description: Paste the relevant log or crash report. This will be rendered as code, no backticks needed.
+      render: text
+  - type: textarea
+    id: mods
+    attributes:
+      label: Other mods installed
+      description: Other rendering/shader mods (Iris, etc.) are especially relevant.

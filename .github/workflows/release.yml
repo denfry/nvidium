@@ -1,0 +1,97 @@
+name: Release
+
+# Auto-tag + auto-release.
+#
+# On every push to a release branch this reads `mod_version` from the active
+# Stonecutter node. If no tag `v<mod_version>` exists yet, it builds the mod,
+# creates the tag, and publishes a GitHub Release with the jar attached and
+# auto-generated release notes. Bumping `mod_version` is therefore all it takes
+# to cut a release. A manual run (workflow_dispatch) does the same thing.
+
+on:
+  push:
+    branches: [ multiversion, dev ]
+    paths:
+      - 'versions/**/gradle.properties'
+      - 'gradle.properties'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      # Path to the active node's gradle.properties (FOCUS: only 1.20.1 today).
+      - name: Read mod version
+        id: ver
+        run: |
+          VERSION=$(grep -E '^mod_version=' versions/1.20.1/gradle.properties | cut -d= -f2 | tr -d '[:space:]')
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not read mod_version from versions/1.20.1/gradle.properties"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: $VERSION"
+
+      - name: Check whether tag already exists
+        id: check
+        run: |
+          if git rev-parse "refs/tags/${{ steps.ver.outputs.tag }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag ${{ steps.ver.outputs.tag }} already exists — skipping release."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Tag ${{ steps.ver.outputs.tag }} is new — will release."
+          fi
+
+      - name: Set up JDK 17
+        if: steps.check.outputs.exists == 'false'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Make gradlew executable
+        if: steps.check.outputs.exists == 'false'
+        run: chmod +x ./gradlew
+
+      - name: Build
+        if: steps.check.outputs.exists == 'false'
+        run: ./gradlew build --stacktrace
+
+      - name: Collect release jar
+        if: steps.check.outputs.exists == 'false'
+        id: jar
+        run: |
+          JAR=$(find versions -path '*/build/libs/*.jar' \
+            ! -name '*-dev.jar' ! -name '*-sources.jar' | head -n1)
+          if [ -z "$JAR" ]; then
+            echo "::error::No release jar found under versions/**/build/libs"
+            exit 1
+          fi
+          echo "path=$JAR" >> "$GITHUB_OUTPUT"
+          echo "Found jar: $JAR"
+
+      - name: Create release
+        if: steps.check.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: Nvidium ${{ steps.ver.outputs.version }}
+          generate_release_notes: true
+          files: ${{ steps.jar.outputs.path }}
+          fail_on_unmatched_files: true
