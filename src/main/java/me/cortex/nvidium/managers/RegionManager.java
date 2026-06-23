@@ -1,6 +1,7 @@
 package me.cortex.nvidium.managers;
 
 
+import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import me.cortex.nvidium.gl.RenderDevice;
 import me.cortex.nvidium.gl.buffers.IDeviceMappedBuffer;
@@ -22,6 +23,11 @@ public class RegionManager {
     private final RenderDevice device;
 
     private final Region[] regions;
+
+    //Region ids whose GPU meta changed this frame. A region is touched once per added/removed
+    //section, but only the final packed state matters, so we coalesce all the changes and upload
+    //each dirty region once per frame in flushDirtyRegions() instead of on every section change.
+    private final IntArrayList dirtyRegions = new IntArrayList();
 
     public RegionManager(RenderDevice device, int maxRegions) {
         this.device = device;
@@ -65,6 +71,7 @@ public class RegionManager {
         //private final short[] mapping = new short[256];//can theoretically get rid of this
         private final BitSet freeIndices = new BitSet(256);
         private int count;
+        private boolean dirty;//Already queued in dirtyRegions this frame
         private final byte[] id2pos = new byte[256];
 
         private Region(long key, int id, int rx, int ry, int rz) {
@@ -150,7 +157,7 @@ public class RegionManager {
         //Mark the section is set
         region.id2pos[sectionId] = (byte) ((sectionY & 3) << 6 | sectionX & 7 | (sectionZ & 7) << 3);
 
-        updateRegion(uploadStream, region);
+        markRegionDirty(region);
 
         return (region.id<<8)|sectionId;//region.id*8+sectionId
     }
@@ -171,7 +178,7 @@ public class RegionManager {
         if (region.count == 0) {
             idProvider.release(region.id);
             //Note: there is a special-case in region.getPackedData that means when count == 0, it auto nulls
-            updateRegion(uploadStream, region);
+            markRegionDirty(region);
             regions[region.id] = null;
             region.count = -111;
 
@@ -179,14 +186,34 @@ public class RegionManager {
                 throw new IllegalStateException();
             }
         } else {
-            updateRegion(uploadStream, region);
+            markRegionDirty(region);
         }
     }
 
-    //TODO: need to batch changes, cause in alot of cases the region is updated multiple times a frame
-    private void updateRegion(UploadingBufferStream uploadingStream, Region region) {
-        long segment = uploadingStream.getUpload(regionBuffer, (long) region.id * META_SIZE, META_SIZE);
-        MemoryUtil.memPutLong(segment, region.getPackedData());
+    //Queue the region's meta for a single upload at the end of the frame. A region is commonly
+    //touched many times per frame (e.g. up to 256 sections loading into it); coalescing avoids
+    //that many redundant 8-byte uploads since only the final packed state is observable.
+    private void markRegionDirty(Region region) {
+        if (!region.dirty) {
+            region.dirty = true;
+            dirtyRegions.add(region.id);
+        }
+    }
+
+    //Uploads every region touched this frame exactly once. A dirty id whose region was removed
+    //(regions[id] == null) writes 0, matching getPackedData()'s removed-region encoding. Must be
+    //called once per frame before the upload stream is committed.
+    public void flushDirtyRegions(UploadingBufferStream uploadStream) {
+        for (int k = 0; k < dirtyRegions.size(); k++) {
+            int id = dirtyRegions.getInt(k);
+            Region region = regions[id];
+            long segment = uploadStream.getUpload(regionBuffer, (long) id * META_SIZE, META_SIZE);
+            MemoryUtil.memPutLong(segment, region != null ? region.getPackedData() : 0);
+            if (region != null) {
+                region.dirty = false;
+            }
+        }
+        dirtyRegions.clear();
     }
 
     public void delete() {

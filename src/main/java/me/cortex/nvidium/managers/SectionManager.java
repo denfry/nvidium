@@ -143,6 +143,8 @@ public class SectionManager {
     }
 
     public void commitChanges() {
+        //Flush coalesced region-meta changes into the same upload stream right before it commits.
+        regionManager.flushDirtyRegions(uploadStream);
         uploadStream.commit();
     }
 
