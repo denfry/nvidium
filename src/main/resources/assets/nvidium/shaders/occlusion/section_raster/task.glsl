@@ -19,8 +19,9 @@ layout(local_size_x=1) in;
 taskNV out Task {
     uint32_t _visOutBase;// The base offset for the visibility output of the shader
     uint32_t _offset;//start offset for regions (can/should probably be a uint16 since this is just the region id << 8)
-    uint8_t _count;//incase i do that 1 mesh shader does multiple cubes
     //uint64_t bitcheck[4];//TODO: MAYBE DO THIS, each bit is whether there a section at that index, doing so is faster than pulling metadata to check if a section is valid or not
+    mat4 regionTransform;
+    ivec3 chunkShift;
 };
 
 void main() {
@@ -31,27 +32,36 @@ void main() {
 
     //Emit 7 workloads per chunk
     uint cmdIdx = gl_WorkGroupID.x;
+    uint transCmdIdx = (uint(regionCount) - gl_WorkGroupID.x) - 1;
 
     //Early exit if the region wasnt visible
     if (regionVisibility[gl_WorkGroupID.x] == uint8_t(0)) {
         terrainCommandBuffer[cmdIdx] = uvec2(0);
+        translucencyCommandBuffer[transCmdIdx] = uvec2(0);
+        gl_TaskCountNV = 0;
         return;
     }
 
+    #ifdef STATISTICS_REGIONS
+    atomicAdd(statistics_buffer, 1);
+    #endif
+
     //FIXME: It might actually be more efficent to just upload the region data straight into the ubo
     uint32_t offset = regionIndicies[gl_WorkGroupID.x];
-    uint64_t data = regionData[offset];
-    //The section slot count is stored biased by -1 in bits 48-55 (see RegionManager.packRegion)
-    //so a fully packed 256-section region fits the 8-bit field instead of wrapping to 0 and
-    //vanishing. data==0 marks an empty/removed region, which must dispatch nothing.
-    uint count = (data == uint64_t(0)) ? 0u : (uint((data>>48)&uint64_t(0xFF)) + 1u);
+    Region data = regionData[offset];
+    int count = unpackRegionCount(data)+1;
 
     //Write in order
     _visOutBase = offset<<8;//This makes checking visibility very fast and quick in the compute shader
     _offset = offset<<8;
-    _count = uint8_t(count);
+    regionTransform = getRegionTransformation(data);
+
+    chunkShift = (-chunkPosition.xyz) - unpackOriginOffsetId(unpackRegionTransformId(data));
 
     gl_TaskCountNV = count;
 
-    terrainCommandBuffer[cmdIdx] = uvec2(count, _visOutBase);
+    terrainCommandBuffer[cmdIdx] = uvec2(uint32_t(count), _visOutBase);
+    //TODO: add a bit to the region header to determine whether or not a region has any translucent
+    // sections, if it doesnt, write 0 to the command buffer
+    translucencyCommandBuffer[transCmdIdx] = uvec2(uint32_t(count), _visOutBase);
 }

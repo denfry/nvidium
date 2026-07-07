@@ -17,8 +17,8 @@ import static org.lwjgl.opengl.NVMeshShader.glDrawMeshTasksNV;
 
 public class RegionVisibilityTracker {
     private final Shader shader = Shader.make()
-            .addSource(MESH, ShaderLoader.parse(new Identifier("nvidium", "occlusion/queries/region/mesh.glsl")))
-            .addSource(FRAGMENT, ShaderLoader.parse(new Identifier("nvidium", "occlusion/queries/region/fragment.frag")))
+            .addSource(MESH, ShaderLoader.parse(Identifier.of("nvidium", "occlusion/queries/region/mesh.glsl")))
+            .addSource(FRAGMENT, ShaderLoader.parse(Identifier.of("nvidium", "occlusion/queries/region/fragment.frag")))
             .compile();
 
     private final DownloadTaskStream downStream;
@@ -42,9 +42,7 @@ public class RegionVisibilityTracker {
         glDrawMeshTasksNV(0,regionCount);
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
         downStream.download(regionVisibilityBuffer, 0, regionCount, ptr -> {
-            //Iterate regionCount, not regionMapping.length: the mapping is now a pooled buffer sized
-            //to maxRegions, of which only the first regionCount entries belong to this frame.
-            for (int i = 0; i < regionCount; i++) {
+            for (int i = 0; i < regionMapping.length; i++) {
                 if (MemoryUtil.memGetByte(ptr + i) == 1) {
                     //System.out.println(regionMapping[i] + " was visible");
                     frustum[regionMapping[i]]++;

@@ -6,16 +6,11 @@ import it.unimi.dsi.fastutil.longs.LongRBTreeSet;
 
 import java.util.Random;
 
-//NOTE: sizes are packed into SIZE_BITS (30) bits, so no single allocation or free block may
-// exceed SIZE_MSK (2^30-1) units. alloc() now rejects oversized requests up front (fail loud
-// instead of silently corrupting the packing). A *merged* free block could only exceed the bound
-// if totalSize did, i.e. if the backing buffer held > 2^30 units (~80 GB of quads); callers cap
-// usage far below that via the VRAM budget, so that path is unreachable in practice. Lifting the
-// limit entirely would need a long[]-indexed rewrite or automatic multi-block splitting.
-
 //TODO: replace the LongAVLTreeSet with a custom implementation that doesnt cause allocations when searching
 // and see if something like a RBTree is any better
 public class SegmentedManager {
+    public static final long SIZE_LIMIT = -1;
+
     private final int ADDR_BITS = 34;//This gives max size per allocation of 2^30 and max address of 2^39
     private final int SIZE_BITS = 64 - ADDR_BITS;
     private final long SIZE_MSK = (1L<<SIZE_BITS)-1;
@@ -36,16 +31,17 @@ public class SegmentedManager {
 
     }*/
 
-    public long alloc(int size) {//TODO: add alignment support
-        if (size <= 0 || size > SIZE_MSK) throw new IllegalArgumentException("alloc size out of range: " + size);
+    public long alloc(int size) {
+        if (size == 0) throw new IllegalArgumentException();
         //This is stupid, iterator is not inclusive
         var iter = FREE.iterator(((long) size << ADDR_BITS)-1);
         if (!iter.hasNext()) {//No free space for allocation
             //Create new allocation
             resized = true;
             long addr = totalSize;
-            if (totalSize+size>sizeLimit)
-                throw new IllegalStateException("More memory than limit allows was attempted to be allocated");
+            if (totalSize+size>sizeLimit) {
+                return SIZE_LIMIT;
+            }
             totalSize += size;
             TAKEN.add((addr<<SIZE_BITS)|((long) size));
             return addr;
@@ -87,7 +83,6 @@ public class SegmentedManager {
             iter.nextLong();//Need to reset the iter into its state
         }//If there is no previous it means were at the start of the buffer, we might need to merge with block 0 if we are not block 0
         else if (!FREE.isEmpty()) {// if free is not empty it means we must merge with block of free starting at 0
-            //if (addr != 0)//FIXME: this is very dodgy solution, if addr == 0 it means its impossible for there to be a previous element
             if (FREE.remove(addr<<ADDR_BITS)) {//Attempt to remove block 0, this is very dodgy as it assumes block zero is 0 addr n size
                 slot = addr + size;//slot at address 0 and size of 0 block + new block
             }

@@ -1,7 +1,10 @@
+#define MESH_WORKLOAD_PER_INVOCATION 16
+
 taskNV out Task {
     vec3 origin;
     uint baseOffset;
     uint quadCount;
+    uint transformationId;
 
     //Binary search indexs and data
     uvec4 binIa;
@@ -9,6 +12,7 @@ taskNV out Task {
     uvec4 binVa;
     uvec4 binVb;
 };
+
 void putBinData(inout uint idx, inout uint lastIndex, uint offset, uint nextOffset) {
     uint len = nextOffset - offset;
     uint id = idx++;
@@ -26,6 +30,12 @@ void putBinData(inout uint idx, inout uint lastIndex, uint offset, uint nextOffs
 void populateTasks(ivec3 relChunkPos, uvec4 ranges) {
     //TODO: make the ranges cumulate up, this means that we can fit much much more data per chunk
     // as the range will be spred across all the offsets since they are not the absolute offset
+
+    //Hacky thing to render all block faces if the flag is not set
+    if (!useBlockFaceCulling()) {
+        relChunkPos = ivec3(0);
+    }
+
     uint idx = 0;
     uint lastIndex = 0;
 
@@ -34,32 +44,39 @@ void populateTasks(ivec3 relChunkPos, uvec4 ranges) {
 
     uint fr = (ranges.w>>16)&0xFFFF;
 
-    if (relChunkPos.y <= 0) {
-        putBinData(idx, lastIndex, fr, fr + (ranges.x&0xFFFF));
+    uint delta = (ranges.x&0xFFFF);
+    if (relChunkPos.x <= 0 && delta > 0) {
+        putBinData(idx, lastIndex, fr, fr + delta);
     }
     fr += ranges.x&0xFFFF;
 
-    if (relChunkPos.y >= 0) {
-        putBinData(idx, lastIndex, fr, fr + ((ranges.x>>16)&0xFFFF));
+    delta = ((ranges.x>>16)&0xFFFF);
+    if (relChunkPos.y <= 0 && delta > 0) {
+        putBinData(idx, lastIndex, fr, fr + delta);
     }
     fr += (ranges.x>>16)&0xFFFF;
 
-    if (relChunkPos.x <= 0) {
-        putBinData(idx, lastIndex, fr, fr + (ranges.y&0xFFFF));
+    delta = ranges.y&0xFFFF;
+    if (relChunkPos.z <= 0 && delta > 0) {
+        putBinData(idx, lastIndex, fr, fr + delta);
     }
     fr += ranges.y&0xFFFF;
 
-    if (relChunkPos.x >= 0) {
-        putBinData(idx, lastIndex, fr, fr + ((ranges.y>>16)&0xFFFF));
+    delta = (ranges.y>>16)&0xFFFF;
+    if (relChunkPos.x >= 0 && delta > 0) {
+        putBinData(idx, lastIndex, fr, fr + delta);
     }
     fr += (ranges.y>>16)&0xFFFF;
 
-    if (relChunkPos.z <= 0) {
-        putBinData(idx, lastIndex, fr, fr + (ranges.z&0xFFFF));
+    delta = ranges.z&0xFFFF;
+    if (relChunkPos.y >= 0 && delta > 0) {
+        putBinData(idx, lastIndex, fr, fr + delta);
     }
     fr += ranges.z&0xFFFF;
-    if (relChunkPos.z >= 0) {
-        putBinData(idx, lastIndex, fr, fr + ((ranges.z>>16)&0xFFFF));
+
+    delta = (ranges.z>>16)&0xFFFF;
+    if (relChunkPos.z >= 0 && delta > 0) {
+        putBinData(idx, lastIndex, fr, fr + delta);
     }
     fr += (ranges.z>>16)&0xFFFF;
 

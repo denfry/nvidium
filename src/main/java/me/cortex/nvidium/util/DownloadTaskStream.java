@@ -21,7 +21,7 @@ public class DownloadTaskStream {
 
     private final SegmentedManager allocator = new SegmentedManager();
     private final RenderDevice device;
-    private PersistentClientMappedBuffer buffer;//TODO: make it self resizing if full
+    private PersistentClientMappedBuffer buffer;
 
     private int cidx;
     private final ObjectList<Download>[] allocations;
@@ -52,6 +52,7 @@ public class DownloadTaskStream {
     }
 
     public void delete() {
+        TickableManager.remove(this);
         buffer.delete();
     }
 }

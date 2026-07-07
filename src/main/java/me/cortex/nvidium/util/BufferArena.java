@@ -5,6 +5,8 @@ import me.cortex.nvidium.gl.RenderDevice;
 import me.cortex.nvidium.gl.buffers.IDeviceMappedBuffer;
 import me.cortex.nvidium.gl.buffers.PersistentSparseAddressableBuffer;
 
+//TODO: make it not remove and immediately deallocate the sparse pages, wait until the end of a frame to deallocate
+// since committing pages is not cheap
 public class BufferArena {
     SegmentedManager segments = new SegmentedManager();
     private final RenderDevice device;
@@ -23,12 +25,18 @@ public class BufferArena {
             buffer = device.createSparseBuffer(80000000000L);//Create a 80gb buffer
         } else {
             buffer = device.createDeviceOnlyMappedBuffer(memory);
+            this.segments.setLimit(memory/(4L*this.vertexFormatSize));
         }
+        //Reserve index 0
+        this.allocQuads(1);
     }
 
     public int allocQuads(int quadCount) {
         totalQuads += quadCount;
         int addr = (int) segments.alloc(quadCount);
+        if (addr == SegmentedManager.SIZE_LIMIT) {
+            return addr;
+        }
         if (buffer instanceof PersistentSparseAddressableBuffer psab) {
             psab.ensureAllocated(Integer.toUnsignedLong(addr) * 4L * vertexFormatSize, quadCount * 4L * vertexFormatSize);
         }
@@ -44,7 +52,7 @@ public class BufferArena {
     }
 
     public long upload(UploadingBufferStream stream, int addr) {
-        return stream.getUpload(buffer, Integer.toUnsignedLong(addr)*4L*vertexFormatSize, (int) segments.getSize(addr)*4*vertexFormatSize);
+        return stream.upload(buffer, Integer.toUnsignedLong(addr)*4L*vertexFormatSize, (int) segments.getSize(addr)*4*vertexFormatSize);
     }
 
     public void delete() {
@@ -74,5 +82,9 @@ public class BufferArena {
     public float getFragmentation() {
         long expected = totalQuads * vertexFormatSize * 4;
         return (float) ((double)expected/getMemoryUsed());
+    }
+
+    public boolean canReuse(int addr, int quads) {
+        return this.segments.getSize(addr) == quads;
     }
 }

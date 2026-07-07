@@ -22,7 +22,11 @@ public class PersistentSparseAddressableBuffer extends GlObject implements IDevi
 
     public final long addr;
     public final long size;
-    public static final long PAGE_SIZE = 1<<16;
+
+    //The reason the page size is now 1mb is cause the nv driver doesnt defrag the sparse allocations easily
+    // meaning smaller pages result in more fragmented memory and not happy for the driver
+    // 1mb seems to work well
+    public static final long PAGE_SIZE = 1<<20;//16
 
     public PersistentSparseAddressableBuffer(long size) {
         super(glCreateBuffers());
@@ -71,10 +75,6 @@ public class PersistentSparseAddressableBuffer extends GlObject implements IDevi
     }
 
     public void ensureAllocated(long addr, long size) {
-        // pend is the exclusive ceiling page index for the byte range [addr, addr+size);
-        // the spanned pages are [pstart, pend), i.e. (pend - pstart) pages. The previous
-        // (pend - pstart + 1) over-committed one extra page per allocation (wasted VRAM and,
-        // at the very end of the buffer, a commit past its storage -> GL error).
         int pstart = (int) (addr/PAGE_SIZE);
         int pend   = (int) ((addr+size+PAGE_SIZE-1)/PAGE_SIZE);
         allocatePages(pstart, pend-pstart);
@@ -92,7 +92,18 @@ public class PersistentSparseAddressableBuffer extends GlObject implements IDevi
     }
 
     public void delete() {
+        super.free0();
         glMakeNamedBufferNonResidentNV(id);
         glDeleteBuffers(id);
+    }
+
+    @Override
+    public void free() {
+        this.delete();
+    }
+
+    @Override
+    public long getSize() {
+        return size;
     }
 }
