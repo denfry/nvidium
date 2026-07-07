@@ -27,7 +27,7 @@ stonecutter {
     centralScript = "build.gradle"
 
     // One node per Sodium-API generation (see versions/<node>/gradle.properties):
-    //   1.20.1  -> Sodium 0.4.10 (G0.4)
+    //   1.20.1  -> Sodium 0.5.13 (G0.5; migrated off 0.4.10 on branch 1.20.1-sodium0.5)
     //   1.21    -> Sodium 0.5.11 (G0.5)
     //   1.21.6  -> Sodium 0.6.13 (G0.6)
     //   1.21.10 -> Sodium 0.7.2  (G0.7)
