@@ -41,14 +41,17 @@ void main() {
     //FIXME: It might actually be more efficent to just upload the region data straight into the ubo
     uint32_t offset = regionIndicies[gl_WorkGroupID.x];
     uint64_t data = regionData[offset];
-    uint8_t count = (uint8_t)((data>>48)&0xFF);
+    //The section slot count is stored biased by -1 in bits 48-55 (see RegionManager.packRegion)
+    //so a fully packed 256-section region fits the 8-bit field instead of wrapping to 0 and
+    //vanishing. data==0 marks an empty/removed region, which must dispatch nothing.
+    uint count = (data == uint64_t(0)) ? 0u : (uint((data>>48)&uint64_t(0xFF)) + 1u);
 
     //Write in order
     _visOutBase = offset<<8;//This makes checking visibility very fast and quick in the compute shader
     _offset = offset<<8;
-    _count = count;
+    _count = uint8_t(count);
 
     gl_TaskCountNV = count;
 
-    terrainCommandBuffer[cmdIdx] = uvec2(uint32_t(count), _visOutBase);
+    terrainCommandBuffer[cmdIdx] = uvec2(count, _visOutBase);
 }

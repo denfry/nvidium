@@ -39,7 +39,12 @@ public class RegionManager {
 
     private static long packRegion(int tcount, int sizeX, int sizeY, int sizeZ, int startX, int startY, int startZ) {
         long size = (long)sizeY<<62 | (long)sizeX<<59 | (long)sizeZ<<56;
-        long count = (long)tcount<<48;
+        //tcount is the number of section slots to scan (1..256). The GPU field is only 8 bits
+        //(bits 48-55), so a fully packed 256-section region used to wrap to 0 there — the shader
+        //then dispatched 0 sections and the whole region vanished, and the stray bit 56 also
+        //inflated sizeZ. getPackedData never packs an empty region (count==0 returns early), so
+        //tcount>=1 and (tcount-1) is in [0,255]: store the biased count and let the shader add 1.
+        long count = (long)(tcount-1)<<48;
         long offset = ((long)startX&0xfffff)<<0 | ((long)startY&0xff)<<40 | ((long)startZ&0xfffff)<<20;
         return size|count|offset;
     }
