@@ -98,6 +98,14 @@ public class RenderPipeline {
     //look regions up directly instead of scanning the whole visible list.
     private final int[] regionIdToVisibleIndex;
 
+    //Per-in-flight-frame snapshots of the visible-position -> region id mapping. The visibility
+    //download callback (RegionVisibilityTracker.computeVisibility) captures the frame's mapping and
+    //only runs `frames` ticks later, so a single reused buffer would be overwritten before its
+    //callback reads it. A ring of frames+1 buffers (one more than the download latency) guarantees
+    //each captured snapshot survives until its callback fires, replacing the per-frame short[] alloc.
+    private final short[][] regionMapPool;
+    private int regionMapCursor;
+
     //Max memory that the gpu can use to store geometry in mb
     private long max_geometry_memory;
     private long last_sample_time;
@@ -128,6 +136,9 @@ public class RenderPipeline {
         regionVisibilityTracker = new BitSet(maxRegions);
         regionSortBuffer = new int[maxRegions];
         regionIdToVisibleIndex = new int[maxRegions];
+        //frames+1 buffers: the visibility download fires `frames` ticks after enqueue, so one spare
+        //slot beyond the latency keeps a captured snapshot alive until its callback has consumed it.
+        regionMapPool = new short[frames + 1][maxRegions];
 
         regionVisibilityTracking = new RegionVisibilityTracker(downloadStream, maxRegions);
 
@@ -181,7 +192,12 @@ public class RenderPipeline {
             }
             if (visibleRegions == 0) return;
             Arrays.sort(regionSortBuffer, 0, visibleRegions);//Nearest-first by packed key
-            regionMap = new short[visibleRegions];
+            //Take the next ring buffer instead of allocating. Only [0, visibleRegions) is written and
+            //read this frame; stale entries past that are never touched. Advancing here (past the
+            //visibleRegions==0 early-out) keeps the cursor in lockstep with computeVisibility's
+            //download enqueues, which is what the frames+1 sizing is balanced against.
+            regionMap = regionMapPool[regionMapCursor];
+            regionMapCursor = regionMapCursor + 1 == regionMapPool.length ? 0 : regionMapCursor + 1;
             long addr = sectionManager.uploadStream.getUpload(sceneUniform, SCENE_SIZE, visibleRegions*2);
             for (int j = 0; j < visibleRegions; j++) {
                 int packed = regionSortBuffer[j];

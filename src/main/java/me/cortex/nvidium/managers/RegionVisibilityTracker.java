@@ -42,7 +42,9 @@ public class RegionVisibilityTracker {
         glDrawMeshTasksNV(0,regionCount);
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
         downStream.download(regionVisibilityBuffer, 0, regionCount, ptr -> {
-            for (int i = 0; i < regionMapping.length; i++) {
+            //Iterate regionCount, not regionMapping.length: the mapping is now a pooled buffer sized
+            //to maxRegions, of which only the first regionCount entries belong to this frame.
+            for (int i = 0; i < regionCount; i++) {
                 if (MemoryUtil.memGetByte(ptr + i) == 1) {
                     //System.out.println(regionMapping[i] + " was visible");
                     frustum[regionMapping[i]]++;
