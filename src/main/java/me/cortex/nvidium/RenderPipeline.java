@@ -225,7 +225,14 @@ public class RenderPipeline {
             }
 
             regionMap = new short[regions.size()];
-            if (visibleRegions == 0) return;
+            if (visibleRegions == 0) {
+                //Nothing visible this frame (e.g. right after a teleport). Reset prevRegionCount so
+                //the terrain and translucent passes, which redraw prevRegionCount regions, don't keep
+                //drawing stale geometry from before the view emptied (ported from drouarb/nvidium
+                //a9c58c4 "Fix translucent pass keeping drawing when teleporting").
+                prevRegionCount = 0;
+                return;
+            }
             long addr = uploadStream.upload(sceneUniform, SCENE_SIZE, visibleRegions*2);
             queryAddr = addr;//This is ungodly hacky
             int j = 0;
